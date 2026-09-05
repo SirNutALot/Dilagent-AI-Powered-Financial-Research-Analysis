@@ -18,8 +18,75 @@ _PROFILE_DIR.mkdir(parents=True, exist_ok=True)
 SEED_TICKERS = list(FEATURED_TICKERS)
 
 
+_PROFILE_VERSION = 2
+
+_REGIONS = {
+    "United States": "North America",
+    "Canada": "North America",
+    "Mexico": "North America",
+    "India": "Asia",
+    "China": "Asia",
+    "Japan": "Asia",
+    "South Korea": "Asia",
+    "Taiwan": "Asia",
+    "Hong Kong": "Asia",
+    "Singapore": "Asia",
+    "Indonesia": "Asia",
+    "Thailand": "Asia",
+    "Malaysia": "Asia",
+    "Australia": "Asia Pacific",
+    "New Zealand": "Asia Pacific",
+    "United Kingdom": "Europe",
+    "Germany": "Europe",
+    "France": "Europe",
+    "Netherlands": "Europe",
+    "Switzerland": "Europe",
+    "Sweden": "Europe",
+    "Norway": "Europe",
+    "Denmark": "Europe",
+    "Italy": "Europe",
+    "Spain": "Europe",
+    "Ireland": "Europe",
+    "Belgium": "Europe",
+    "Finland": "Europe",
+    "Brazil": "Latin America",
+    "Argentina": "Latin America",
+    "Chile": "Latin America",
+    "Israel": "Middle East",
+    "United Arab Emirates": "Middle East",
+    "South Africa": "Africa",
+}
+
+
 def _num(value: Any) -> float | None:
     return safe_float(value)
+
+
+def _region(country: str) -> str:
+    return _REGIONS.get(country or "", "")
+
+
+def _company_size(market_cap: float | None) -> str:
+    if market_cap is None:
+        return ""
+    if market_cap < 3e8:
+        return "Micro"
+    if market_cap < 2e9:
+        return "Small"
+    if market_cap < 1e10:
+        return "Mid"
+    if market_cap < 2e11:
+        return "Large"
+    return "Mega"
+
+
+def _dividend_yield(value: Any) -> float | None:
+    number = _num(value)
+    if number is None:
+        return None
+    if number > 0.25:
+        number = number / 100.0
+    return number
 
 
 def _cache_path(ticker: str):
@@ -103,7 +170,7 @@ def snapshot(ticker: str, *, force: bool = False) -> dict[str, Any] | None:
         return None
     if not force:
         cached = _read_cache(symbol)
-        if cached:
+        if cached and cached.get("_v") == _PROFILE_VERSION:
             return cached
     try:
         handle = yf.Ticker(symbol)
@@ -121,15 +188,34 @@ def snapshot(ticker: str, *, force: bool = False) -> dict[str, Any] | None:
             return None
         annual = _num(info.get("earningsGrowth"))
         quarterly = _num(info.get("earningsQuarterlyGrowth"))
+        price = _num(info.get("currentPrice")) or _num(info.get("regularMarketPrice"))
+        target = _num(info.get("targetMeanPrice"))
+        upside = ((target - price) / price) if price and target else None
+        high52 = _num(info.get("fiftyTwoWeekHigh"))
+        low52 = _num(info.get("fiftyTwoWeekLow"))
+        cash = _num(info.get("totalCash"))
+        debt = _num(info.get("totalDebt"))
+        revenue = _num(info.get("totalRevenue"))
+        fcf = _num(info.get("freeCashflow"))
+        sma50 = _num(info.get("fiftyDayAverage"))
+        sma200 = _num(info.get("twoHundredDayAverage"))
+        country = info.get("country") or ""
+        market_cap = _num(info.get("marketCap"))
+        week52_change = _num(info.get("52WeekChange") or info.get("fiftyTwoWeekChange"))
         row = {
+            "_v": _PROFILE_VERSION,
             "ticker": symbol,
             "name": name or symbol,
+            "cik": str(info.get("cik") or ""),
             "sector": info.get("sector") or "",
             "industry": info.get("industry") or "",
             "exchange": info.get("exchange") or info.get("fullExchangeName") or "",
-            "country": info.get("country") or "",
-            "market_cap": _num(info.get("marketCap")),
-            "revenue": _num(info.get("totalRevenue")),
+            "country": country,
+            "region": _region(country),
+            "quote_type": info.get("quoteType") or "",
+            "company_size": _company_size(market_cap),
+            "market_cap": market_cap,
+            "revenue": revenue,
             "revenue_growth": _num(info.get("revenueGrowth")),
             "earnings_growth": annual if annual is not None else quarterly,
             "earnings_quarterly_growth": quarterly,
@@ -139,14 +225,49 @@ def snapshot(ticker: str, *, force: bool = False) -> dict[str, Any] | None:
             "gross_margin": _num(info.get("grossMargins")),
             "operating_margin": _num(info.get("operatingMargins")),
             "profit_margin": _num(info.get("profitMargins")),
+            "ebitda": _num(info.get("ebitda")),
+            "ebitda_margin": _num(info.get("ebitdaMargins")),
+            "net_income": _num(info.get("netIncomeToCommon")),
+            "gross_profit": _num(info.get("grossProfits")),
             "pe": _num(info.get("trailingPE")),
             "forward_pe": _num(info.get("forwardPE")),
+            "peg": _num(info.get("pegRatio") or info.get("trailingPegRatio")),
             "pb": _num(info.get("priceToBook")),
             "ps": _num(info.get("priceToSalesTrailing12Months")),
             "ev_ebitda": _num(info.get("enterpriseToEbitda")),
+            "ev_revenue": _num(info.get("enterpriseToRevenue")),
+            "enterprise_value": _num(info.get("enterpriseValue")),
+            "eps": _num(info.get("trailingEps")),
+            "book_value": _num(info.get("bookValue")),
+            "price": price,
+            "day_change": _num(info.get("regularMarketChange")),
+            "target_mean": target,
+            "upside": upside,
             "debt_to_equity": _num(info.get("debtToEquity")),
             "current_ratio": _num(info.get("currentRatio")),
-            "free_cashflow": _num(info.get("freeCashflow")),
+            "quick_ratio": _num(info.get("quickRatio")),
+            "free_cashflow": fcf,
+            "operating_cashflow": _num(info.get("operatingCashflow")),
+            "total_cash": cash,
+            "total_debt": debt,
+            "net_debt": (debt - cash) if debt is not None and cash is not None else None,
+            "fcf_margin": (fcf / revenue) if fcf is not None and revenue else None,
+            "beta": _num(info.get("beta")),
+            "sma50": sma50,
+            "sma200": sma200,
+            "price_vs_sma50": ((price - sma50) / sma50) if price and sma50 else None,
+            "price_vs_sma200": ((price - sma200) / sma200) if price and sma200 else None,
+            "week52_high": high52,
+            "week52_low": low52,
+            "week52_change": week52_change,
+            "week52_position": ((price - low52) / (high52 - low52)) if price and high52 and low52 and high52 != low52 else None,
+            "week52_high_dist": ((high52 - price) / high52) if price and high52 else None,
+            "week52_low_dist": ((price - low52) / low52) if price and low52 else None,
+            "dividend_yield": _dividend_yield(info.get("dividendYield") or info.get("trailingAnnualDividendYield")),
+            "dividend_rate": _num(info.get("dividendRate") or info.get("trailingAnnualDividendRate")),
+            "payout_ratio": _num(info.get("payoutRatio")),
+            "held_insiders": _num(info.get("heldPercentInsiders")),
+            "held_institutions": _num(info.get("heldPercentInstitutions")),
             "listed": "." in symbol or not info.get("cik"),
         }
         row.update(_earnings_event(info, handle))
@@ -194,6 +315,32 @@ def hydrate(tickers: list[str], limit: int = 28) -> list[dict[str, Any]]:
     return [by_ticker[symbol] for symbol in ordered if symbol in by_ticker]
 
 
+def _profile_blob(row: dict[str, Any]) -> str:
+    return " ".join(
+        str(row.get(key) or "")
+        for key in (
+            "ticker", "name", "cik", "sector", "industry", "exchange",
+            "country", "region", "quote_type", "company_size",
+        )
+    ).lower()
+
+
+def _search_cached(query: str) -> list[str]:
+    raw = (query or "").strip().lower()
+    if len(raw) < 2 or not _PROFILE_DIR.exists():
+        return []
+    names: list[str] = []
+    for path in _PROFILE_DIR.glob("*.json"):
+        try:
+            row = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        ticker = row.get("ticker")
+        if ticker and raw in _profile_blob(row):
+            names.append(ticker)
+    return names
+
+
 def _search_tickers(query: str) -> list[str]:
     raw = (query or "").strip()
     if len(raw) < 2:
@@ -211,6 +358,7 @@ def _search_tickers(query: str) -> list[str]:
                 names.append(row["ticker"])
     except Exception:
         pass
+    names.extend(_search_cached(raw))
     return names
 
 
@@ -256,7 +404,7 @@ def discover(
         "count": len(rows),
         "note": (
             "Figures are published Yahoo Finance fields only. "
-            "Dilagent scores appear after a Due Diligence run."
+            "Dilagent scores appear after an Analytics run."
         ),
     }
 

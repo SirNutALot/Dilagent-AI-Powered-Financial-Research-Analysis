@@ -18,6 +18,7 @@ const addStatus = $("add-status");
 let addTimer;
 let addHits = [];
 let addActive = -1;
+let lastAnalyzed = null;
 let suggestTimer;
 let activeIndex = -1;
 let currentHits = [];
@@ -300,6 +301,57 @@ function setPillar(cardId, scoreId, ratingId, tipId, score, rating, why) {
   card.classList.add(scoreTone(score));
 }
 
+function escapeHtml(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function highlightMatch(text, query) {
+  const value = String(text || "");
+  const needle = (query || "").trim();
+  if (!needle) return escapeHtml(value);
+  const index = value.toLowerCase().indexOf(needle.toLowerCase());
+  if (index < 0) return escapeHtml(value);
+  return `${escapeHtml(value.slice(0, index))}<mark>${escapeHtml(value.slice(index, index + needle.length))}</mark>${escapeHtml(value.slice(index + needle.length))}`;
+}
+
+function mergeCompanyHits(...lists) {
+  const seen = new Set();
+  const rows = [];
+  for (const list of lists) {
+    for (const row of list || []) {
+      const ticker = (row.ticker || "").toUpperCase();
+      if (!ticker || seen.has(ticker)) continue;
+      seen.add(ticker);
+      rows.push({
+        ticker,
+        name: row.name || ticker,
+        exchange: row.exchange || "",
+        sector: row.sector || "",
+        industry: row.industry || "",
+        reports: row.reports || "",
+        cik: row.cik || "",
+        origin: row.origin || "",
+        listed: row.origin === "listed" || row.origin === "custom" || ticker.includes("."),
+        at: row.at,
+        horizon: row.horizon,
+        label: row.label,
+        score: row.score,
+      });
+    }
+  }
+  return rows;
+}
+
+function suggestionLine(hit, query) {
+  const meta = [hit.ticker, hit.exchange, hit.reports].filter(Boolean).join(" · ");
+  const classification = [hit.sector, hit.industry].filter(Boolean).join(" · ");
+  return `<strong>${highlightMatch(hit.name, query)}</strong><span class="suggest-sub">${highlightMatch(meta, query)}</span>${classification ? `<span class="suggest-meta">${highlightMatch(classification, query)}</span>` : ""}`;
+}
+
 function selectHit(hit) {
   companyInput.value = hit.name;
   tickerInput.value = hit.ticker;
@@ -327,7 +379,7 @@ function paintMoreHint() {
 function appendHits(hits) {
   hits.forEach((hit) => {
     const li = document.createElement("li");
-    li.innerHTML = `<strong>${hit.name}</strong><span>${hit.ticker} · ${hit.reports}</span>`;
+    li.innerHTML = suggestionLine(hit, suggestQuery);
     li.addEventListener("mousedown", (event) => {
       event.preventDefault();
       selectHit(hit);
@@ -390,9 +442,17 @@ async function openSuggestions(query, reset = true) {
     }
     const data = await lookupCompanies(query, reset ? 0 : suggestOffset);
     if (seq !== suggestSeq || companyInput.value.trim() !== query) return;
-    const hits = data.results || [];
+    let hits = data.results || [];
+    if (reset && query.length >= 2) {
+      try {
+        const listed = await fetch(`/api/listed?q=${encodeURIComponent(query)}`).then((res) => res.json());
+        hits = mergeCompanyHits(listed.results, hits);
+      } catch {
+        /* listed search is optional enrichment */
+      }
+    }
     suggestHasMore = Boolean(data.has_more);
-    suggestOffset = (data.offset || 0) + hits.length;
+    suggestOffset = (data.offset || 0) + (data.results || []).length;
     if (!query && reset) {
       featuredCache = { results: hits, has_more: data.has_more };
     }
@@ -446,8 +506,16 @@ companyInput.addEventListener("keydown", (event) => {
 });
 
 document.addEventListener("click", (event) => {
+  const inField = event.target.closest(".company-field") || event.target.closest(".add-field");
   if (!event.target.closest(".company-field")) hideSuggestions();
   if (!event.target.closest(".add-field")) hideAddSuggestions();
+  if (!inField) {
+    document.querySelectorAll(".suggestions").forEach((node) => {
+      if (node.id === "suggestions" || node.id === "add-suggestions") return;
+      node.hidden = true;
+      node.innerHTML = "";
+    });
+  }
 });
 
 function loadTradingView(tv) {
@@ -587,6 +655,15 @@ function render(data) {
   renderCombined(v);
   loadTradingView(c.tradingview);
   rememberRun(data);
+  lastAnalyzed = {
+    ticker: c.ticker,
+    name: c.name,
+    listed: listedInput.value === "1",
+    sector: c.sector || "",
+    industry: c.industry || "",
+    exchange: c.exchange || "",
+  };
+  paintResultStar();
 }
 
 async function runAnalyze(event) {
@@ -723,7 +800,12 @@ async function loadHeadlines() {
 }
 
 const DESK_STORE = "dilagent-desk";
-const VIEWS = ["diligence", "dashboard", "watchlist", "reports", "discover"];
+const VIEWS = ["diligence", "dashboard", "watchlist", "reports", "discover", "method"];
+
+function normalizeView(view) {
+  if (view === "analytics") return "diligence";
+  return view;
+}
 
 function readDesk() {
   try {
@@ -744,6 +826,8 @@ function rememberRun(data) {
   const state = readDesk();
   const ticker = company.ticker || "";
   const previous = (state.reports || []).find((item) => item.ticker === ticker);
+  const fund = data.fundamental?.metrics || {};
+  const tech = data.technical?.indicators || {};
   const row = {
     ticker,
     name: company.name || ticker,
@@ -762,15 +846,53 @@ function rememberRun(data) {
     fundScore: data.fundamental?.score,
     techScore: data.technical?.score,
     newsScore: data.news?.score,
+    pe: fund.trailing_pe,
+    pb: fund.price_to_book,
+    ps: fund.price_to_sales,
+    roe: fund.roe,
+    revenueGrowth: fund.revenue_growth,
+    earningsGrowth: fund.earnings_growth,
+    debtToEquity: fund.debt_to_equity,
+    fcf: fund.free_cashflow,
+    currentRatio: fund.current_ratio,
+    roa: fund.roa,
+    forwardPe: fund.forward_pe,
+    evEbitda: fund.ev_ebitda,
+    grossMargin: fund.gross_margin,
+    operatingMargin: fund.operating_margin,
+    profitMargin: fund.profit_margin,
+    marketCap: company.market_cap,
+    rsi: tech.rsi,
     at: Date.now(),
+    status: "Historical report",
   };
   const reports = [row, ...(state.reports || [])].slice(0, 40);
-  const watch = (state.watch || []).map((item) => (
-    item.ticker === ticker
-      ? { ...item, name: row.name, sector: row.sector, industry: row.industry, exchange: row.exchange }
-      : item
-  ));
+  const exists = (state.watch || []).some((item) => item.ticker === ticker);
+  const watch = exists
+    ? (state.watch || []).map((item) => (
+      item.ticker === ticker
+        ? { ...item, name: row.name, sector: row.sector, industry: row.industry, exchange: row.exchange }
+        : item
+    ))
+    : [{
+        ticker,
+        name: row.name,
+        listed: row.listed,
+        sector: row.sector,
+        industry: row.industry,
+        exchange: row.exchange,
+        addedAt: row.at,
+      }, ...(state.watch || [])];
   const events = [...(state.events || [])];
+  if (!exists) {
+    events.unshift({
+      type: "watch",
+      ticker,
+      name: row.name,
+      text: `${row.name} added to Watchlist after Analytics`,
+      at: row.at,
+    });
+  }
   events.unshift({
     type: "report",
     ticker,
@@ -816,7 +938,7 @@ function closeNav() {
 }
 
 function setView(view) {
-  const next = VIEWS.includes(view) ? view : "diligence";
+  const next = VIEWS.includes(normalizeView(view)) ? normalizeView(view) : "diligence";
   const analysis = next === "diligence";
   show($("desk-search"), analysis);
   show($("desk-main"), analysis);
@@ -824,13 +946,15 @@ function setView(view) {
   show($("view-watchlist"), next === "watchlist");
   show($("view-reports"), next === "reports");
   show($("view-discover"), next === "discover");
+  show($("view-method"), next === "method");
   document.querySelectorAll("[data-view]").forEach((node) => {
     if (node.tagName === "A") node.classList.toggle("is-active", node.dataset.view === next);
   });
   if (window.Desk) window.Desk.paint(next);
   if (next !== "diligence") window.scrollTo({ top: 0, behavior: "smooth" });
   closeNav();
-  if (location.hash !== `#${next}`) history.replaceState(null, "", `#${next}`);
+  const hash = next === "diligence" ? "analytics" : next;
+  if (location.hash !== `#${hash}`) history.replaceState(null, "", `#${hash}`);
 }
 
 document.querySelectorAll("[data-view]").forEach((node) => {
@@ -849,12 +973,135 @@ $("nav-toggle")?.addEventListener("click", () => {
   $("nav-toggle").textContent = open ? "Close" : "Menu";
 });
 
+function paintResultStar() {
+  const button = $("result-star");
+  if (!button || !lastAnalyzed?.ticker) return;
+  const saved = window.Desk ? window.Desk.isWatched(lastAnalyzed.ticker) : false;
+  button.hidden = false;
+  button.classList.toggle("is-on", saved);
+  button.textContent = saved ? "★" : "☆";
+  button.title = saved ? "Remove from Watchlist" : "Add to Watchlist";
+  button.setAttribute("aria-label", button.title);
+}
+
+$("result-star")?.addEventListener("click", (event) => {
+  event.preventDefault();
+  if (!lastAnalyzed?.ticker || !window.Desk) return;
+  window.Desk.toggleWatch(lastAnalyzed);
+  paintResultStar();
+});
+
+function attachCompanySearch(input, list, options) {
+  if (!input || !list) return;
+  const settings = options || {};
+  let timer;
+  let hits = [];
+  let active = -1;
+  let seq = 0;
+
+  function hide() {
+    list.hidden = true;
+    list.innerHTML = "";
+    hits = [];
+    active = -1;
+  }
+
+  function paint() {
+    [...list.children].forEach((node, index) => node.classList.toggle("active", index === active));
+  }
+
+  function render(rows, query) {
+    hits = rows;
+    active = rows.length ? 0 : -1;
+    list.innerHTML = "";
+    if (!rows.length) {
+      hide();
+      return;
+    }
+    rows.forEach((hit, index) => {
+      const li = document.createElement("li");
+      if (index === 0) li.classList.add("active");
+      li.innerHTML = suggestionLine(hit, query);
+      li.addEventListener("mousedown", (event) => {
+        event.preventDefault();
+        settings.onSelect(hit);
+        hide();
+      });
+      list.appendChild(li);
+    });
+    list.hidden = false;
+  }
+
+  async function lookup(query) {
+    const id = ++seq;
+    const local = settings.local ? settings.local(query) : [];
+    if (settings.source === "local") {
+      if (id === seq) render(local, query);
+      return;
+    }
+    if (query.length < 1) {
+      try {
+        const data = await lookupCompanies("", 0);
+        if (id === seq) render(mergeCompanyHits(local, data.results), query);
+      } catch {
+        if (id === seq) render(local, query);
+      }
+      return;
+    }
+    if (query.length < 2) {
+      hide();
+      return;
+    }
+    try {
+      const [sec, listed] = await Promise.all([
+        lookupCompanies(query, 0),
+        fetch(`/api/listed?q=${encodeURIComponent(query)}`).then((res) => res.json()).catch(() => ({ results: [] })),
+      ]);
+      if (id !== seq) return;
+      render(mergeCompanyHits(local, listed.results, sec.results), query);
+    } catch {
+      if (id === seq) render(local, query);
+    }
+  }
+
+  input.addEventListener("focus", () => lookup(input.value.trim()));
+  input.addEventListener("input", () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => lookup(input.value.trim()), 160);
+  });
+  input.addEventListener("keydown", (event) => {
+    if (list.hidden || !hits.length) return;
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      active = Math.min(hits.length - 1, active + 1);
+      paint();
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      active = Math.max(0, active - 1);
+      paint();
+    } else if (event.key === "Enter" && active >= 0) {
+      event.preventDefault();
+      settings.onSelect(hits[active]);
+      hide();
+    } else if (event.key === "Escape") {
+      hide();
+    }
+  });
+}
+
 window.readDesk = readDesk;
 window.writeDesk = writeDesk;
 window.setView = setView;
 window.openDiligence = openDiligence;
+window.attachCompanySearch = attachCompanySearch;
+window.paintResultStar = paintResultStar;
 
-const startView = (location.hash || "#diligence").replace("#", "");
+window.addEventListener("hashchange", () => {
+  const view = normalizeView((location.hash || "#analytics").replace("#", ""));
+  if (VIEWS.includes(view)) setView(view);
+});
+
+const startView = normalizeView((location.hash || "#analytics").replace("#", ""));
 setView(VIEWS.includes(startView) ? startView : "diligence");
 
 loadHeadlines();
