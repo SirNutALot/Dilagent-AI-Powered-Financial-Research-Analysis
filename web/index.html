@@ -106,7 +106,10 @@
       <header class="hero">
         <div class="hero-copy">
           <p class="kicker" id="meta"></p>
-          <h2 id="name"></h2>
+          <h2 class="result-name">
+            <span id="name"></span>
+            <button type="button" class="star-btn result-star" id="result-star" hidden title="Add to Watchlist" aria-label="Add to Watchlist">☆</button>
+          </h2>
           <p class="price" id="price"></p>
           <p class="filing-line" id="filing-line"></p>
           <p class="sources" id="sources"></p>
@@ -234,11 +237,11 @@
     <section id="view-dashboard" class="app-page" hidden>
       <p class="kicker">Dashboard</p>
       <h2>Your research</h2>
-      <p class="muted">What you are following and what has changed. Full analysis stays on Analytics.</p>
+      <p class="muted">A compact view of your shortlist, recent Analytics runs, and stored reports. Full analysis stays on Analytics.</p>
       <div class="dash-grid">
         <article class="app-panel">
           <p class="kicker">Watchlist</p>
-          <h3>Favourite companies</h3>
+          <h3>Saved companies</h3>
           <div id="dash-favs"></div>
         </article>
         <article class="app-panel">
@@ -261,33 +264,16 @@
 
     <section id="view-watchlist" class="app-page" hidden>
       <p class="kicker">Watchlist</p>
-      <h2>Companies I am following</h2>
-      <p class="muted">Search the company list and save a name before you analyze it. Analytics is optional and stays on its own page.</p>
+      <h2>Your Watchlist</h2>
+      <p class="muted">Save companies you're interested in and compare them before deciding which ones to analyze. A company does not need a prior Analytics run. Reports remain the history of completed analyses.</p>
       <form id="watch-search" class="discover-search" autocomplete="off">
-        <div class="field">
+        <div class="field company-field">
           <label for="watch-find">Search companies</label>
-          <input id="watch-find" type="search" placeholder="Search companies…" />
-        </div>
-        <div class="discover-actions">
-          <button type="submit">Search</button>
+          <input id="watch-find" type="text" spellcheck="false" placeholder="Search companies..." autocomplete="off" />
+          <ul id="watch-suggestions" class="suggestions" hidden></ul>
         </div>
       </form>
-      <div id="watch-hits" class="table-wrap" hidden>
-        <p class="result-count" id="watch-hit-count"></p>
-        <table class="wide data-table">
-          <thead>
-            <tr>
-              <th>Company</th>
-              <th>Ticker</th>
-              <th>Market</th>
-              <th>Sector / Industry</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody id="watch-hit-body"></tbody>
-        </table>
-      </div>
-      <p class="kicker" style="margin-top:28px">Saved names</p>
+      <div id="watch-compare" class="compare-box" hidden></div>
       <div class="app-toolbar">
         <input id="watch-q" type="search" placeholder="Filter saved names" />
         <select id="watch-market"><option value="">Market</option></select>
@@ -306,19 +292,22 @@
           <option value="score">Sort: score</option>
           <option value="at">Sort: last analyzed</option>
         </select>
+        <button type="button" class="ghost" id="watch-compare-btn">Compare selected</button>
       </div>
       <div class="table-wrap">
         <table class="wide data-table" id="watch-table">
           <thead>
             <tr>
               <th></th>
+              <th></th>
               <th>Company</th>
+              <th>Ticker</th>
               <th>Market</th>
               <th>Sector</th>
               <th>Industry</th>
               <th>Dilagent score</th>
               <th>Verdict</th>
-              <th>Score change</th>
+              <th>Change</th>
               <th>Last analyzed</th>
               <th></th>
             </tr>
@@ -331,9 +320,12 @@
     <section id="view-reports" class="app-page" hidden>
       <p class="kicker">Reports</p>
       <h2>Research history</h2>
-      <p class="muted">Previous Analytics runs stored in this browser. Open a row to revisit the desk, or select two or more reports to compare.</p>
+      <p class="muted">Completed Analytics runs stored in this browser. Compare historical analyses here — Watchlist compares the companies you are considering, whether or not they have been analyzed.</p>
       <div class="app-toolbar">
-        <input id="report-q" type="search" placeholder="Search reports" />
+        <div class="field company-field report-search-field">
+          <input id="report-q" type="search" placeholder="Search reports" autocomplete="off" />
+          <ul id="report-suggestions" class="suggestions" hidden></ul>
+        </div>
         <select id="report-verdict"><option value="">Verdict</option></select>
         <select id="report-sort">
           <option value="at">Sort: date</option>
@@ -367,9 +359,10 @@
       <h2>What to research next</h2>
       <p class="muted">Search and filter published financials, then save or open Analytics. Dilagent scores appear only after an Analytics run. Filters use fields this app actually stores — missing values show as not available.</p>
       <form id="discover-form" class="discover-search" autocomplete="off">
-        <div class="field">
+        <div class="field company-field">
           <label for="discover-q">Company search</label>
-          <input id="discover-q" type="search" placeholder="Name, ticker, SEC identifier, market, sector, or industry" />
+          <input id="discover-q" type="search" placeholder="Name, ticker, SEC identifier, market, sector, or industry" autocomplete="off" />
+          <ul id="discover-suggestions" class="suggestions" hidden></ul>
         </div>
         <div class="discover-actions">
           <button type="submit">Search</button>

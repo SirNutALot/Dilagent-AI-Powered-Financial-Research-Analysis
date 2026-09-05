@@ -39,6 +39,13 @@
         }, ...(state.events || [])].slice(0, 40);
     window.writeDesk({ ...state, watch, events });
     paint(currentView());
+    if (window.paintResultStar) window.paintResultStar();
+  }
+
+  function addWatch(row) {
+    if (!row || !row.ticker) return;
+    if (!isWatched(row.ticker)) toggleWatch(row);
+    enrichWatch(row);
   }
 
   function currentView() {
@@ -174,7 +181,7 @@
     const log = desk().events || [];
     favs.innerHTML = "";
     if (!watch.length) {
-      empty(favs, "Nothing saved yet. Search on Discover or Watchlist and star a name. You do not need to run Analytics first.");
+      empty(favs, "Nothing saved yet. Star a name on Discover or Watchlist, or run Analytics — analyzed companies are added automatically.");
     } else {
       watch.slice(0, 8).forEach((row) => {
         const block = document.createElement("div");
@@ -264,26 +271,28 @@
     body.innerHTML = "";
     if (!rows.length) {
       const tr = document.createElement("tr");
-      tr.innerHTML = `<td colspan="10" class="empty-note">No saved names match. Search above to add a company without running Analytics.</td>`;
+      tr.innerHTML = `<td colspan="12" class="empty-note">No saved names match. Use the search above to add a company without running Analytics.</td>`;
       body.appendChild(tr);
       return;
     }
     rows.forEach((row) => {
       const tr = document.createElement("tr");
+      const check = document.createElement("td");
+      check.innerHTML = `<input type="checkbox" class="watch-check" value="${row.ticker}" />`;
       const star = document.createElement("td");
       star.appendChild(starButton(row));
       const company = document.createElement("td");
-      company.innerHTML = `<strong>${row.name}</strong><div class="muted">${row.ticker}</div>`;
+      company.innerHTML = `<strong>${row.name}</strong>`;
       const actions = document.createElement("td");
       const wrap = document.createElement("div");
       wrap.className = "row-actions";
       wrap.appendChild(actionButton("Open", "ghost", () => openCompany(row, false)));
       wrap.appendChild(actionButton("Run Analytics", "", () => openCompany(row, true)));
-      wrap.appendChild(actionButton("Remove", "ghost", () => toggleWatch(row)));
       actions.appendChild(wrap);
+      tr.appendChild(check);
       tr.appendChild(star);
       tr.appendChild(company);
-      tr.insertAdjacentHTML("beforeend", `<td>${row.exchange || row.market || "—"}</td><td>${row.sector || "—"}</td><td>${row.industry || "—"}</td><td>${scoreText(row.score)}</td>`);
+      tr.insertAdjacentHTML("beforeend", `<td>${row.ticker}</td><td>${row.exchange || row.market || "—"}</td><td>${row.sector || "—"}</td><td>${row.industry || "—"}</td><td>${scoreText(row.score)}</td>`);
       const verdictCell = document.createElement("td");
       verdictCell.innerHTML = row.label
         ? `<span class="pill ${row.investable || tone(row.score)}">${row.label}</span>`
@@ -432,6 +441,103 @@
       <p class="compare-meta">Similar based on the stored snapshot from each run. Open Analytics and run again for a current analysis. Missing fields show as —.</p>
       <div class="compare-charts">${scoreRows}</div>
       ${spark}
+      <div class="table-wrap"><table class="wide data-table">
+        <thead><tr><th>Metric</th>${headers.map((item) => `<th>${item}</th>`).join("")}</tr></thead>
+        <tbody>${tableRows}</tbody>
+      </table></div>`;
+  }
+
+  function scoreBars(picked) {
+    return [
+      ["Overall", "score"],
+      ["Fundamentals", "fundScore"],
+      ["Technicals", "techScore"],
+      ["News / external", "newsScore"],
+    ].map(([label, key]) => {
+      const bars = picked.map((row) => {
+        const value = row[key];
+        const width = value == null ? 0 : Math.max(0, Math.min(100, Number(value)));
+        const klass = tone(value);
+        return `<div class="cmp-bar-row"><span>${row.ticker}</span><div class="cmp-track"><i class="${klass === "yes" ? "is-yes" : klass === "cautious" ? "is-wait" : klass === "no" ? "is-no" : ""}" style="width:${width}%"></i></div><span>${scoreText(value)}</span></div>`;
+      }).join("");
+      return `<div class="cmp-metric"><strong>${label}</strong>${bars}</div>`;
+    }).join("");
+  }
+
+  async function compareWatch() {
+    const box = $("watch-compare");
+    if (!box) return;
+    const tickers = [...document.querySelectorAll(".watch-check:checked")].map((node) => node.value);
+    if (tickers.length < 2) {
+      box.hidden = false;
+      box.innerHTML = `<p class="empty-note">Select at least two companies on your Watchlist, then compare.</p>`;
+      return;
+    }
+    const byTicker = Object.fromEntries(watchedRows().map((row) => [row.ticker, row]));
+    let published = {};
+    try {
+      const response = await fetch(`/api/discover?tickers=${encodeURIComponent(tickers.join(","))}`);
+      const data = await response.json();
+      for (const row of data.results || []) published[row.ticker] = row;
+    } catch {
+      published = {};
+    }
+    const picked = tickers.map((ticker) => {
+      const saved = byTicker[ticker] || { ticker };
+      const extra = published[ticker] || {};
+      return {
+        ...extra,
+        ...saved,
+        ticker,
+        name: saved.name || extra.name || ticker,
+        market_cap: extra.market_cap,
+        revenue_growth: extra.revenue_growth,
+        earnings_growth: extra.earnings_growth,
+        roe: saved.roe ?? extra.roe,
+        roa: saved.roa ?? extra.roa,
+        pe: saved.pe ?? extra.pe,
+        forward_pe: saved.forwardPe ?? extra.forward_pe,
+        pb: saved.pb ?? extra.pb,
+        ev_ebitda: saved.evEbitda ?? extra.ev_ebitda,
+        debt_to_equity: saved.debtToEquity ?? extra.debt_to_equity,
+        free_cashflow: saved.fcf ?? extra.free_cashflow,
+        gross_margin: extra.gross_margin,
+        operating_margin: extra.operating_margin,
+        profit_margin: extra.profit_margin,
+      };
+    });
+    const headers = picked.map((row) => `${row.name}<div class="muted">${row.ticker}${row.at ? ` · Analyzed ${when(row.at)}` : " · Not analyzed"}</div>`);
+    const metrics = [
+      ["Status", (row) => (row.at ? "Saved and analyzed" : "Saved — not analyzed")],
+      ["Dilagent score", (row) => scoreText(row.score)],
+      ["Fundamentals", (row) => scoreText(row.fundScore)],
+      ["Technicals", (row) => scoreText(row.techScore)],
+      ["News / external", (row) => scoreText(row.newsScore)],
+      ["Verdict", (row) => row.label || "Not analyzed"],
+      ["Market", (row) => row.exchange || row.market || "—"],
+      ["Sector", (row) => row.sector || "—"],
+      ["Industry", (row) => row.industry || "—"],
+      ["Market cap", (row) => cap(row.market_cap)],
+      ["Revenue growth", (row) => pct(row.revenue_growth)],
+      ["Earnings growth", (row) => pct(row.earnings_growth)],
+      ["ROE", (row) => pct(row.roe)],
+      ["ROA", (row) => pct(row.roa)],
+      ["Gross margin", (row) => pct(row.gross_margin)],
+      ["Operating margin", (row) => pct(row.operating_margin)],
+      ["Net margin", (row) => pct(row.profit_margin)],
+      ["P/E", (row) => num(row.pe)],
+      ["Forward P/E", (row) => num(row.forward_pe)],
+      ["Price / Book", (row) => num(row.pb, 2)],
+      ["EV / EBITDA", (row) => num(row.ev_ebitda)],
+      ["Debt / Equity", (row) => num(row.debt_to_equity)],
+      ["Free cash flow", (row) => cap(row.free_cashflow)],
+    ];
+    const tableRows = metrics.map(([label, read]) => `<tr><td>${label}</td>${picked.map((row) => `<td>${read(row)}</td>`).join("")}</tr>`).join("");
+    box.hidden = false;
+    box.innerHTML = `<p class="kicker">Watchlist comparison</p>
+      <h3>Companies you are considering</h3>
+      <p class="compare-meta">This compares the shortlist, not historical reports. Unanalyzed names show — / Not analyzed. Published financials come from Yahoo profile fields Dilagent has fetched.</p>
+      <div class="compare-charts">${scoreBars(picked)}</div>
       <div class="table-wrap"><table class="wide data-table">
         <thead><tr><th>Metric</th>${headers.map((item) => `<th>${item}</th>`).join("")}</tr></thead>
         <tbody>${tableRows}</tbody>
@@ -898,69 +1004,6 @@
     $(id)?.addEventListener("change", paintReports);
   });
 
-  async function searchWatchNames(event) {
-    if (event) event.preventDefault();
-    const query = ($("watch-find")?.value || "").trim();
-    const host = $("watch-hits");
-    const body = $("watch-hit-body");
-    const count = $("watch-hit-count");
-    if (!host || !body) return;
-    if (query.length < 2) {
-      host.hidden = true;
-      return;
-    }
-    count.textContent = "Searching the existing company list…";
-    host.hidden = false;
-    try {
-      const [sec, listed, discovered] = await Promise.all([
-        fetch(`/api/companies?q=${encodeURIComponent(query)}&limit=20`).then((res) => res.json()),
-        fetch(`/api/listed?q=${encodeURIComponent(query)}`).then((res) => res.json()).catch(() => ({ results: [] })),
-        fetch(`/api/discover?q=${encodeURIComponent(query)}`).then((res) => res.json()).catch(() => ({ results: [] })),
-      ]);
-      const seen = new Set();
-      const hits = [];
-      for (const row of [...(discovered.results || []), ...(sec.results || []), ...(listed.results || [])]) {
-        const ticker = (row.ticker || "").toUpperCase();
-        if (!ticker || seen.has(ticker)) continue;
-        seen.add(ticker);
-        hits.push({
-          ticker,
-          name: row.name || ticker,
-          exchange: row.exchange || "",
-          sector: row.sector || "",
-          industry: row.industry || "",
-          cik: row.cik || "",
-          listed: row.origin === "listed" || ticker.includes("."),
-        });
-      }
-      count.textContent = `${hits.length} match${hits.length === 1 ? "" : "es"} — add to Watchlist without running Analytics.`;
-      body.innerHTML = "";
-      if (!hits.length) {
-        body.innerHTML = `<tr><td colspan="5" class="empty-note">No company in the SEC / Yahoo list matched that search.</td></tr>`;
-        return;
-      }
-      hits.forEach((row) => {
-        const tr = document.createElement("tr");
-        const sector = [row.sector, row.industry].filter(Boolean).join(" / ") || "—";
-        tr.innerHTML = `<td><strong>${row.name}</strong></td><td>${row.ticker}</td><td>${row.exchange || "—"}</td><td>${sector}</td>`;
-        const actions = document.createElement("td");
-        const wrap = document.createElement("div");
-        wrap.className = "row-actions";
-        wrap.appendChild(starButton(row));
-        wrap.appendChild(actionButton(isWatched(row.ticker) ? "Saved" : "Add to Watchlist", "ghost", () => {
-          if (!isWatched(row.ticker)) toggleWatch(row);
-          enrichWatch(row);
-        }));
-        wrap.appendChild(actionButton("Run Analytics", "", () => openCompany(row, true)));
-        actions.appendChild(wrap);
-        tr.appendChild(actions);
-        body.appendChild(tr);
-      });
-    } catch {
-      count.textContent = "Search failed.";
-    }
-  }
-
   async function enrichWatch(row) {
     try {
       const response = await fetch(`/api/profile?q=${encodeURIComponent(row.ticker)}`);
@@ -985,15 +1028,39 @@
     }
   }
 
-  let watchTimer;
-  $("watch-search")?.addEventListener("submit", searchWatchNames);
-  $("watch-find")?.addEventListener("input", () => {
-    clearTimeout(watchTimer);
-    watchTimer = setTimeout(() => searchWatchNames(), 320);
-  });
+  $("watch-search")?.addEventListener("submit", (event) => event.preventDefault());
+  if (window.attachCompanySearch) {
+    window.attachCompanySearch($("watch-find"), $("watch-suggestions"), {
+      onSelect(hit) {
+        addWatch(hit);
+        if ($("watch-find")) $("watch-find").value = "";
+      },
+    });
+    window.attachCompanySearch($("discover-q"), $("discover-suggestions"), {
+      onSelect(hit) {
+        if ($("discover-q")) $("discover-q").value = hit.name;
+        loadDiscover();
+      },
+    });
+    window.attachCompanySearch($("report-q"), $("report-suggestions"), {
+      source: "local",
+      local(query) {
+        const needle = (query || "").trim().toLowerCase();
+        return (desk().reports || []).filter((row) => {
+          const blob = `${row.name} ${row.ticker}`.toLowerCase();
+          return !needle || blob.includes(needle);
+        }).slice(0, 12);
+      },
+      onSelect(hit) {
+        if ($("report-q")) $("report-q").value = hit.name || hit.ticker;
+        paintReports();
+      },
+    });
+  }
   $("add-filter")?.addEventListener("click", addCustomFilter);
   $("open-method")?.addEventListener("click", () => go("method"));
   $("report-compare")?.addEventListener("click", compareReports);
+  $("watch-compare-btn")?.addEventListener("click", compareWatch);
 
   $("discover-form")?.addEventListener("submit", (event) => {
     event.preventDefault();
@@ -1008,6 +1075,6 @@
     if (lastDiscover.length) paintDiscoverRows(lastDiscover);
   });
 
-  window.Desk = { paint, toggleWatch, isWatched };
+  window.Desk = { paint, toggleWatch, isWatched, addWatch };
   paint(currentView());
 })();
