@@ -17,7 +17,7 @@ from advisor.resolve import resolve_company, search_listed
 app = FastAPI(
     title=APP_NAME,
     description="Due-diligence desk: is this company investable?",
-    version="2.1.0",
+    version="2.2.0",
 )
 app.add_middleware(
     CORSMiddleware,

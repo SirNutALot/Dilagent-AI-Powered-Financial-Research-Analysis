@@ -723,7 +723,12 @@ async function loadHeadlines() {
 }
 
 const DESK_STORE = "dilagent-desk";
-const VIEWS = ["diligence", "dashboard", "watchlist", "reports", "discover"];
+const VIEWS = ["diligence", "dashboard", "watchlist", "reports", "discover", "method"];
+
+function normalizeView(view) {
+  if (view === "analytics") return "diligence";
+  return view;
+}
 
 function readDesk() {
   try {
@@ -744,6 +749,8 @@ function rememberRun(data) {
   const state = readDesk();
   const ticker = company.ticker || "";
   const previous = (state.reports || []).find((item) => item.ticker === ticker);
+  const fund = data.fundamental?.metrics || {};
+  const tech = data.technical?.indicators || {};
   const row = {
     ticker,
     name: company.name || ticker,
@@ -762,7 +769,18 @@ function rememberRun(data) {
     fundScore: data.fundamental?.score,
     techScore: data.technical?.score,
     newsScore: data.news?.score,
+    pe: fund.trailing_pe,
+    pb: fund.price_to_book,
+    ps: fund.price_to_sales,
+    roe: fund.roe,
+    revenueGrowth: fund.revenue_growth,
+    earningsGrowth: fund.earnings_growth,
+    debtToEquity: fund.debt_to_equity,
+    fcf: fund.free_cashflow,
+    currentRatio: fund.current_ratio,
+    rsi: tech.rsi,
     at: Date.now(),
+    status: "Historical report",
   };
   const reports = [row, ...(state.reports || [])].slice(0, 40);
   const watch = (state.watch || []).map((item) => (
@@ -816,7 +834,7 @@ function closeNav() {
 }
 
 function setView(view) {
-  const next = VIEWS.includes(view) ? view : "diligence";
+  const next = VIEWS.includes(normalizeView(view)) ? normalizeView(view) : "diligence";
   const analysis = next === "diligence";
   show($("desk-search"), analysis);
   show($("desk-main"), analysis);
@@ -824,13 +842,15 @@ function setView(view) {
   show($("view-watchlist"), next === "watchlist");
   show($("view-reports"), next === "reports");
   show($("view-discover"), next === "discover");
+  show($("view-method"), next === "method");
   document.querySelectorAll("[data-view]").forEach((node) => {
     if (node.tagName === "A") node.classList.toggle("is-active", node.dataset.view === next);
   });
   if (window.Desk) window.Desk.paint(next);
   if (next !== "diligence") window.scrollTo({ top: 0, behavior: "smooth" });
   closeNav();
-  if (location.hash !== `#${next}`) history.replaceState(null, "", `#${next}`);
+  const hash = next === "diligence" ? "analytics" : next;
+  if (location.hash !== `#${hash}`) history.replaceState(null, "", `#${hash}`);
 }
 
 document.querySelectorAll("[data-view]").forEach((node) => {
@@ -854,7 +874,12 @@ window.writeDesk = writeDesk;
 window.setView = setView;
 window.openDiligence = openDiligence;
 
-const startView = (location.hash || "#diligence").replace("#", "");
+window.addEventListener("hashchange", () => {
+  const view = normalizeView((location.hash || "#analytics").replace("#", ""));
+  if (VIEWS.includes(view)) setView(view);
+});
+
+const startView = normalizeView((location.hash || "#analytics").replace("#", ""));
 setView(VIEWS.includes(startView) ? startView : "diligence");
 
 loadHeadlines();

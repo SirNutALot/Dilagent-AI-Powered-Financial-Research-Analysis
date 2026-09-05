@@ -91,11 +91,15 @@ def _sorted_filers() -> list[dict[str, Any]]:
     return _SORTED_FILERS
 
 
-def _match_score(query: str, ticker: str, title: str) -> int:
-    q = query.lower()
+def _match_score(query: str, ticker: str, title: str, cik: str = "") -> int:
+    q = query.lower().strip()
     t = ticker.lower()
     n = title.lower()
     legal = n.split(",")[0]
+    digits = "".join(ch for ch in q if ch.isdigit())
+    cik_digits = "".join(ch for ch in str(cik) if ch.isdigit())
+    if cik_digits and digits and (cik_digits == digits or cik_digits.lstrip("0") == digits.lstrip("0")):
+        return 96
     if t == q:
         return 100
     if t.startswith(q):
@@ -137,7 +141,7 @@ def list_filers(query: str, limit: int = 40, offset: int = 0) -> dict[str, Any]:
             title = str(row.get("title") or "").strip()
             if not ticker or not title:
                 continue
-            score = _match_score(raw, ticker, title)
+            score = _match_score(raw, ticker, title, str(row.get("cik_str") or ""))
             if score:
                 hits.append((score, _filer_row(row, score)))
         hits.sort(key=lambda item: (-item[0], item[1]["name"]))

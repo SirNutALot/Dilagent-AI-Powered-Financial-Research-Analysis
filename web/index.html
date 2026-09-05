@@ -12,12 +12,12 @@
 <body>
   <header class="top">
     <div class="top-inner">
-      <a class="brand" href="#diligence" data-view="diligence">
+      <a class="brand" href="#analytics" data-view="diligence">
         <span class="mark">Dilagent</span>
         <span class="brand-sub">Due diligence</span>
       </a>
       <nav class="nav" id="site-nav" aria-label="Desk sections">
-        <a href="#diligence" data-view="diligence" class="is-active">Due Diligence</a>
+        <a href="#analytics" data-view="diligence" class="is-active">Analytics</a>
         <a href="#dashboard" data-view="dashboard">Dashboard</a>
         <a href="#watchlist" data-view="watchlist">Watchlist</a>
         <a href="#reports" data-view="reports">Reports</a>
@@ -31,8 +31,10 @@
 
   <div class="workspace">
     <aside class="flash" id="flash-left" aria-label="Market headlines">
-      <p class="kicker">Market tape</p>
-      <ol id="flash-left-list"><li class="muted">Loading tape…</li></ol>
+      <div class="flash-rail">
+        <p class="kicker">Market tape</p>
+        <ol id="flash-left-list"><li class="muted">Loading tape…</li></ol>
+      </div>
     </aside>
     <div class="desk">
     <section class="search-band" id="desk-search">
@@ -231,26 +233,25 @@
     </main>
     <section id="view-dashboard" class="app-page" hidden>
       <p class="kicker">Dashboard</p>
-      <h2>Research home</h2>
-      <p class="muted">A view of what you are following and what you have already run. Detailed analysis stays on Due Diligence.</p>
-      <div class="action-row" id="dash-actions">
-        <button type="button" data-go="diligence">Run Due Diligence</button>
-        <button type="button" class="ghost" data-go="discover">Discover companies</button>
-        <button type="button" class="ghost" data-go="watchlist">View Watchlist</button>
-        <button type="button" class="ghost" data-go="reports">View Reports</button>
-      </div>
+      <h2>Your research</h2>
+      <p class="muted">What you are following and what has changed. Full analysis stays on Analytics.</p>
       <div class="dash-grid">
         <article class="app-panel">
-          <p class="kicker">Favourite companies</p>
-          <h3>Watchlist</h3>
+          <p class="kicker">Watchlist</p>
+          <h3>Favourite companies</h3>
           <div id="dash-favs"></div>
         </article>
         <article class="app-panel">
-          <p class="kicker">Recent research</p>
-          <h3>Latest runs</h3>
+          <p class="kicker">Recent Analytics</p>
+          <h3>Recently analyzed</h3>
           <div id="dash-recent"></div>
         </article>
       </div>
+      <article class="app-panel">
+        <p class="kicker">Recent Reports</p>
+        <h3>Latest saved reports</h3>
+        <div id="dash-reports"></div>
+      </article>
       <article class="app-panel">
         <p class="kicker">Research changes</p>
         <h3>What moved</h3>
@@ -261,12 +262,40 @@
     <section id="view-watchlist" class="app-page" hidden>
       <p class="kicker">Watchlist</p>
       <h2>Companies I am following</h2>
-      <p class="muted">Your shortlist only. Open a name to run Due Diligence — the full analysis is not repeated here.</p>
+      <p class="muted">Search the company list and save a name before you analyze it. Analytics is optional and stays on its own page.</p>
+      <form id="watch-search" class="discover-search" autocomplete="off">
+        <div class="field">
+          <label for="watch-find">Search companies</label>
+          <input id="watch-find" type="search" placeholder="Search companies…" />
+        </div>
+        <div class="discover-actions">
+          <button type="submit">Search</button>
+        </div>
+      </form>
+      <div id="watch-hits" class="table-wrap" hidden>
+        <p class="result-count" id="watch-hit-count"></p>
+        <table class="wide data-table">
+          <thead>
+            <tr>
+              <th>Company</th>
+              <th>Ticker</th>
+              <th>Market</th>
+              <th>Sector / Industry</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="watch-hit-body"></tbody>
+        </table>
+      </div>
+      <p class="kicker" style="margin-top:28px">Saved names</p>
       <div class="app-toolbar">
-        <input id="watch-q" type="search" placeholder="Search companies" />
+        <input id="watch-q" type="search" placeholder="Filter saved names" />
         <select id="watch-market"><option value="">Market</option></select>
         <select id="watch-sector"><option value="">Sector</option></select>
-        <select id="watch-verdict"><option value="">Verdict</option></select>
+        <select id="watch-verdict">
+          <option value="">Verdict</option>
+          <option value="unanalyzed">Not analyzed</option>
+        </select>
         <select id="watch-change">
           <option value="">Score change</option>
           <option value="up">Improving</option>
@@ -285,10 +314,11 @@
               <th></th>
               <th>Company</th>
               <th>Market</th>
+              <th>Sector</th>
               <th>Industry</th>
               <th>Dilagent score</th>
               <th>Verdict</th>
-              <th>Change</th>
+              <th>Score change</th>
               <th>Last analyzed</th>
               <th></th>
             </tr>
@@ -301,7 +331,7 @@
     <section id="view-reports" class="app-page" hidden>
       <p class="kicker">Reports</p>
       <h2>Research history</h2>
-      <p class="muted">Previous Due Diligence runs in this browser. View report opens the existing analysis desk.</p>
+      <p class="muted">Previous Analytics runs stored in this browser. Open a row to revisit the desk, or select two or more reports to compare.</p>
       <div class="app-toolbar">
         <input id="report-q" type="search" placeholder="Search reports" />
         <select id="report-verdict"><option value="">Verdict</option></select>
@@ -310,108 +340,284 @@
           <option value="score">Sort: score</option>
           <option value="name">Sort: company</option>
         </select>
+        <button type="button" class="ghost" id="report-compare">Compare selected</button>
       </div>
-      <div id="report-cards" class="report-grid"></div>
+      <div id="compare-box" class="compare-box" hidden></div>
+      <div class="table-wrap">
+        <table class="wide data-table" id="report-table">
+          <thead>
+            <tr>
+              <th></th>
+              <th>Company</th>
+              <th>Score</th>
+              <th>Verdict</th>
+              <th>Horizon</th>
+              <th>Date</th>
+              <th>Status</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="report-body"></tbody>
+        </table>
+      </div>
     </section>
 
     <section id="view-discover" class="app-page" hidden>
       <p class="kicker">Discover</p>
       <h2>What to research next</h2>
-      <p class="muted">Search and filter published financials. Dilagent scores appear only after you have run Due Diligence.</p>
+      <p class="muted">Search and filter published financials, then save or open Analytics. Dilagent scores appear only after an Analytics run. Filters use fields this app actually stores — missing values show as not available.</p>
       <form id="discover-form" class="discover-search" autocomplete="off">
         <div class="field">
           <label for="discover-q">Company search</label>
-          <input id="discover-q" type="search" placeholder="Search companies, ticker, industry, sector, or market" />
+          <input id="discover-q" type="search" placeholder="Name, ticker, SEC identifier, market, sector, or industry" />
         </div>
-        <button type="submit">Search</button>
-        <button type="button" class="ghost" id="discover-similar">Find similar companies</button>
+        <div class="discover-actions">
+          <button type="submit">Search</button>
+          <button type="button" class="ghost" id="discover-similar">Find similar</button>
+        </div>
       </form>
       <p class="muted" id="similar-note" hidden></p>
-      <div id="similar-box" class="similar-box" hidden></div>
+      <div class="similar-criteria" id="similar-criteria">
+        <span class="kicker">Similar based on</span>
+        <label><input type="checkbox" name="sim" value="industry" checked /> Same industry</label>
+        <label><input type="checkbox" name="sim" value="sector" checked /> Same sector</label>
+        <label><input type="checkbox" name="sim" value="market" /> Same market</label>
+        <label><input type="checkbox" name="sim" value="mcap" checked /> Similar market cap</label>
+        <label><input type="checkbox" name="sim" value="revenue" /> Similar revenue</label>
+        <label><input type="checkbox" name="sim" value="growth" /> Similar growth</label>
+        <label><input type="checkbox" name="sim" value="profit" /> Similar profitability</label>
+        <label><input type="checkbox" name="sim" value="value" /> Similar valuation</label>
+        <label><input type="checkbox" name="sim" value="health" /> Similar financial health</label>
+      </div>
       <div class="preset-row" id="discover-presets">
         <button type="button" class="ghost" data-preset="fundamentals">Strong Fundamentals</button>
         <button type="button" class="ghost" data-preset="growth">High Growth</button>
-        <button type="button" class="ghost" data-preset="lowdebt">Low Debt</button>
-        <button type="button" class="ghost" data-preset="profit">Profitable Companies</button>
         <button type="button" class="ghost" data-preset="earnings">Improving Earnings</button>
+        <button type="button" class="ghost" data-preset="profit">Profitable Companies</button>
+        <button type="button" class="ghost" data-preset="lowdebt">Low Debt</button>
+        <button type="button" class="ghost" data-preset="fcf">Strong Free Cash Flow</button>
         <button type="button" class="ghost" data-preset="value">Value Candidates</button>
         <button type="button" class="ghost" data-preset="score">High Dilagent Score</button>
-        <button type="button" class="ghost" data-preset="similar">Similar to a Company</button>
+        <button type="button" class="ghost" data-preset="improving">Improving Dilagent Score</button>
+        <button type="button" class="ghost" data-preset="similar">Similar Companies</button>
       </div>
       <details class="filter-box" open>
-        <summary>Financial filters</summary>
-        <div class="filter-grid">
-          <fieldset>
-            <legend>Company</legend>
-            <label>Market <select id="f-market"><option value="">Any</option></select></label>
-            <label>Sector <select id="f-sector"><option value="">Any</option></select></label>
-            <label>Industry <select id="f-industry"><option value="">Any</option></select></label>
-            <label>Market cap
-              <select id="f-cap">
-                <option value="">Any</option>
-                <option value="small">Under $2B</option>
-                <option value="mid">$2B–$10B</option>
-                <option value="large">$10B–$200B</option>
-                <option value="mega">Over $200B</option>
-              </select>
-            </label>
-          </fieldset>
-          <fieldset>
-            <legend>Growth</legend>
-            <label>Revenue growth
-              <select id="f-rev">
-                <option value="">Any</option>
-                <option value="pos">Positive</option>
-                <option value="10">Above 10%</option>
-                <option value="25">Above 25%</option>
-                <option value="neg">Declining</option>
-              </select>
-            </label>
-            <label>Earnings growth
-              <select id="f-earn">
-                <option value="">Any</option>
-                <option value="pos">Positive</option>
-                <option value="10">Above 10%</option>
-                <option value="25">Above 25%</option>
-                <option value="neg">Declining</option>
-              </select>
-            </label>
-            <label>Earnings trend
-              <select id="f-trend">
-                <option value="">Any</option>
-                <option value="improving">Improving</option>
-                <option value="stable">Stable</option>
-                <option value="declining">Declining</option>
-              </select>
-            </label>
-            <label>Earnings events
-              <select id="f-event">
-                <option value="">Any</option>
-                <option value="upcoming">Upcoming earnings</option>
-                <option value="recent">Recent earnings</option>
-              </select>
-            </label>
-          </fieldset>
-          <fieldset>
-            <legend>Profitability</legend>
-            <label>ROE <select id="f-roe"><option value="">Any</option><option value="pos">Positive</option><option value="10">Above 10%</option><option value="20">Above 20%</option></select></label>
-            <label>ROA <select id="f-roa"><option value="">Any</option><option value="pos">Positive</option><option value="5">Above 5%</option></select></label>
-            <label>Operating margin <select id="f-opm"><option value="">Any</option><option value="pos">Positive</option><option value="15">Above 15%</option></select></label>
-            <label>Net margin <select id="f-npm"><option value="">Any</option><option value="pos">Positive</option></select></label>
-          </fieldset>
-          <fieldset>
-            <legend>Valuation &amp; health</legend>
-            <label>P/E <select id="f-pe"><option value="">Any</option><option value="15">Under 15</option><option value="25">Under 25</option></select></label>
-            <label>Price / Book <select id="f-pb"><option value="">Any</option><option value="3">Under 3</option></select></label>
-            <label>EV / EBITDA <select id="f-ev"><option value="">Any</option><option value="12">Under 12</option></select></label>
-            <label>Debt / Equity <select id="f-de"><option value="">Any</option><option value="50">Under 50</option><option value="100">Under 100</option></select></label>
-          </fieldset>
-          <fieldset>
-            <legend>Dilagent</legend>
-            <label>Dilagent score <select id="f-dscore"><option value="">Any</option><option value="70">70%+</option><option value="45">45%+</option></select></label>
-            <label>Fundamentals <select id="f-dfund"><option value="">Any</option><option value="70">70%+</option></select></label>
-            <label>Verdict <select id="f-dverdict"><option value="">Any</option></select></label>
-          </fieldset>
+        <summary>Filters</summary>
+        <div class="filter-groups">
+          <details class="filter-group" open>
+            <summary>Company / classification</summary>
+            <div class="filter-grid">
+              <label>Country <select id="f-country"><option value="">Any</option></select></label>
+              <label>Region <select id="f-region"><option value="">Any</option></select></label>
+              <label>Exchange <select id="f-market"><option value="">Any</option></select></label>
+              <label>Sector <select id="f-sector"><option value="">Any</option></select></label>
+              <label>Industry <select id="f-industry"><option value="">Any</option></select></label>
+              <label>Security type <select id="f-type"><option value="">Any</option></select></label>
+              <label>Company size
+                <select id="f-size">
+                  <option value="">Any</option>
+                  <option value="Micro">Micro</option>
+                  <option value="Small">Small</option>
+                  <option value="Mid">Mid</option>
+                  <option value="Large">Large</option>
+                  <option value="Mega">Mega</option>
+                </select>
+              </label>
+              <label>Market cap
+                <select id="f-cap">
+                  <option value="">Any</option>
+                  <option value="micro">Under $300M</option>
+                  <option value="small">Under $2B</option>
+                  <option value="mid">$2B–$10B</option>
+                  <option value="large">$10B–$200B</option>
+                  <option value="mega">Over $200B</option>
+                </select>
+              </label>
+            </div>
+          </details>
+          <details class="filter-group">
+            <summary>Price / market data</summary>
+            <div class="filter-grid">
+              <label>Price
+                <select id="f-price">
+                  <option value="">Any</option>
+                  <option value="10">Under 10</option>
+                  <option value="50">Under 50</option>
+                  <option value="200">Under 200</option>
+                  <option value="200p">Over 200</option>
+                </select>
+              </label>
+              <label>Day change
+                <select id="f-day">
+                  <option value="">Any</option>
+                  <option value="pos">Up</option>
+                  <option value="neg">Down</option>
+                </select>
+              </label>
+              <label>52-week change
+                <select id="f-yret">
+                  <option value="">Any</option>
+                  <option value="pos">Positive</option>
+                  <option value="20">Above 20%</option>
+                  <option value="neg">Negative</option>
+                </select>
+              </label>
+              <label>52-week position
+                <select id="f-52pos">
+                  <option value="">Any</option>
+                  <option value="high">Near 52-week high</option>
+                  <option value="low">Near 52-week low</option>
+                  <option value="mid">Mid-range</option>
+                </select>
+              </label>
+              <label>Beta
+                <select id="f-beta">
+                  <option value="">Any</option>
+                  <option value="1">Under 1</option>
+                  <option value="1.5">Under 1.5</option>
+                  <option value="1p">Above 1</option>
+                </select>
+              </label>
+              <label>Price vs 50-day average
+                <select id="f-sma50">
+                  <option value="">Any</option>
+                  <option value="above">Above</option>
+                  <option value="below">Below</option>
+                </select>
+              </label>
+              <label>Price vs 200-day average
+                <select id="f-sma200">
+                  <option value="">Any</option>
+                  <option value="above">Above</option>
+                  <option value="below">Below</option>
+                </select>
+              </label>
+            </div>
+            <p class="muted">50-day and 200-day averages are Yahoo published fields. RSI, MACD, ATR, and SMA 20 are computed only during an Analytics run and can be compared in Reports.</p>
+          </details>
+          <details class="filter-group">
+            <summary>Growth &amp; earnings</summary>
+            <div class="filter-grid">
+              <label>Revenue growth
+                <select id="f-rev">
+                  <option value="">Any</option>
+                  <option value="pos">Positive</option>
+                  <option value="10">Above 10%</option>
+                  <option value="25">Above 25%</option>
+                  <option value="neg">Declining</option>
+                </select>
+              </label>
+              <label>Earnings growth
+                <select id="f-earn">
+                  <option value="">Any</option>
+                  <option value="pos">Positive</option>
+                  <option value="10">Above 10%</option>
+                  <option value="25">Above 25%</option>
+                  <option value="neg">Declining</option>
+                </select>
+              </label>
+              <label>Quarterly earnings growth
+                <select id="f-qearn">
+                  <option value="">Any</option>
+                  <option value="pos">Positive</option>
+                  <option value="10">Above 10%</option>
+                  <option value="neg">Declining</option>
+                </select>
+              </label>
+              <label>Earnings trend
+                <select id="f-trend">
+                  <option value="">Any</option>
+                  <option value="improving">Improving</option>
+                  <option value="stable">Stable</option>
+                  <option value="declining">Declining</option>
+                </select>
+              </label>
+              <label>Earnings sign
+                <select id="f-esign">
+                  <option value="">Any</option>
+                  <option value="pos">Positive net income</option>
+                  <option value="neg">Negative net income</option>
+                </select>
+              </label>
+              <label>EPS
+                <select id="f-eps">
+                  <option value="">Any</option>
+                  <option value="pos">Positive</option>
+                  <option value="neg">Negative</option>
+                </select>
+              </label>
+              <label>Earnings events
+                <select id="f-event">
+                  <option value="">Any</option>
+                  <option value="upcoming">Upcoming earnings</option>
+                  <option value="recent">Recent earnings</option>
+                </select>
+              </label>
+            </div>
+          </details>
+          <details class="filter-group">
+            <summary>Profitability</summary>
+            <div class="filter-grid">
+              <label>ROE <select id="f-roe"><option value="">Any</option><option value="pos">Positive</option><option value="10">Above 10%</option><option value="20">Above 20%</option></select></label>
+              <label>ROA <select id="f-roa"><option value="">Any</option><option value="pos">Positive</option><option value="5">Above 5%</option></select></label>
+              <label>Gross margin <select id="f-gm"><option value="">Any</option><option value="pos">Positive</option><option value="30">Above 30%</option></select></label>
+              <label>Operating margin <select id="f-opm"><option value="">Any</option><option value="pos">Positive</option><option value="15">Above 15%</option></select></label>
+              <label>EBITDA margin <select id="f-ebitda-m"><option value="">Any</option><option value="pos">Positive</option><option value="15">Above 15%</option></select></label>
+              <label>Net margin <select id="f-npm"><option value="">Any</option><option value="pos">Positive</option></select></label>
+              <label>EBITDA <select id="f-ebitda"><option value="">Any</option><option value="pos">Positive</option></select></label>
+              <label>Net income <select id="f-ni"><option value="">Any</option><option value="pos">Positive</option><option value="neg">Negative</option></select></label>
+            </div>
+          </details>
+          <details class="filter-group">
+            <summary>Valuation</summary>
+            <div class="filter-grid">
+              <label>P/E <select id="f-pe"><option value="">Any</option><option value="15">Under 15</option><option value="25">Under 25</option></select></label>
+              <label>Forward P/E <select id="f-fpe"><option value="">Any</option><option value="15">Under 15</option><option value="25">Under 25</option></select></label>
+              <label>Price / Book <select id="f-pb"><option value="">Any</option><option value="3">Under 3</option></select></label>
+              <label>Price / Sales <select id="f-ps"><option value="">Any</option><option value="3">Under 3</option></select></label>
+              <label>EV / EBITDA <select id="f-ev"><option value="">Any</option><option value="12">Under 12</option></select></label>
+              <label>EV / Sales <select id="f-evs"><option value="">Any</option><option value="3">Under 3</option><option value="8">Under 8</option></select></label>
+              <label>Implied upside <select id="f-upside"><option value="">Any</option><option value="pos">Target above price</option><option value="15">Above 15%</option></select></label>
+            </div>
+          </details>
+          <details class="filter-group">
+            <summary>Balance sheet / cash</summary>
+            <div class="filter-grid">
+              <label>Debt / Equity <select id="f-de"><option value="">Any</option><option value="50">Under 50</option><option value="100">Under 100</option></select></label>
+              <label>Current ratio <select id="f-cr"><option value="">Any</option><option value="1">Above 1</option><option value="1.5">Above 1.5</option></select></label>
+              <label>Quick ratio <select id="f-qr"><option value="">Any</option><option value="1">Above 1</option></select></label>
+              <label>Free cash flow <select id="f-fcf"><option value="">Any</option><option value="pos">Positive</option></select></label>
+              <label>Operating cash flow <select id="f-ocf"><option value="">Any</option><option value="pos">Positive</option></select></label>
+              <label>FCF margin <select id="f-fcfm"><option value="">Any</option><option value="pos">Positive</option><option value="10">Above 10%</option></select></label>
+              <label>Net debt <select id="f-nd"><option value="">Any</option><option value="cash">Net cash</option><option value="debt">Net debt</option></select></label>
+            </div>
+          </details>
+          <details class="filter-group">
+            <summary>Dividends &amp; ownership</summary>
+            <div class="filter-grid">
+              <label>Dividend yield <select id="f-div"><option value="">Any</option><option value="pos">Pays a dividend</option><option value="2">Above 2%</option></select></label>
+              <label>Payout ratio <select id="f-payout"><option value="">Any</option><option value="60">Under 60%</option></select></label>
+              <label>Insider ownership <select id="f-ins"><option value="">Any</option><option value="5">Above 5%</option></select></label>
+              <label>Institutional ownership <select id="f-inst"><option value="">Any</option><option value="50">Above 50%</option></select></label>
+            </div>
+          </details>
+          <details class="filter-group">
+            <summary>Dilagent</summary>
+            <div class="filter-grid">
+              <label>Dilagent score <select id="f-dscore"><option value="">Any</option><option value="70">70%+</option><option value="45">45%+</option></select></label>
+              <label>Fundamentals <select id="f-dfund"><option value="">Any</option><option value="70">70%+</option></select></label>
+              <label>Technicals <select id="f-dtech"><option value="">Any</option><option value="70">70%+</option></select></label>
+              <label>News / external <select id="f-dnews"><option value="">Any</option><option value="70">70%+</option></select></label>
+              <label>Verdict <select id="f-dverdict"><option value="">Any</option></select></label>
+              <label>Score change <select id="f-dchg"><option value="">Any</option><option value="up">Improving</option><option value="down">Declining</option></select></label>
+            </div>
+          </details>
+        </div>
+        <div class="custom-filters">
+          <p class="kicker">Custom filter</p>
+          <p class="muted">Add a condition on any published field Dilagent actually stores. Rows without a required numeric field are excluded unless you choose “is not available”.</p>
+          <div id="custom-filter-rows"></div>
+          <button type="button" class="ghost" id="add-filter">Add filter</button>
         </div>
       </details>
       <p class="result-count" id="discover-count">Search or apply a preset to see published matches.</p>
@@ -421,7 +627,9 @@
             <tr>
               <th></th>
               <th>Company</th>
+              <th>Market</th>
               <th>Sector</th>
+              <th>Industry</th>
               <th>Market cap</th>
               <th>Revenue growth</th>
               <th>Earnings growth</th>
@@ -435,10 +643,98 @@
         </table>
       </div>
     </section>
+
+    <section id="view-method" class="app-page method-page" hidden>
+      <p class="kicker">Secondary</p>
+      <h2>Methodology &amp; sources</h2>
+      <p class="muted">How Dilagent actually works in this codebase — not a marketing description.</p>
+
+      <article class="app-panel">
+        <p class="kicker">How Dilagent works</p>
+        <h3>Three pillars, then a combined verdict</h3>
+        <p>Analytics scores a company on three separate passes, then combines them. The percentages are confidence in each pillar under Dilagent’s rules, not a predicted return.</p>
+        <ul class="own-look-list">
+          <li><strong>Fundamentals</strong> — published ratios and statements from Yahoo Finance, plus optional notes pulled from an SEC 10-K/10-Q or an uploaded PDF.</li>
+          <li><strong>Technicals</strong> — price-history measures (RSI, MACD, SMA 20/50/200, ATR, 52-week range) computed from Yahoo daily history. Used as entry timing, not business quality.</li>
+          <li><strong>News / external</strong> — Yahoo ticker news plus RSS headlines, scanned for controversy keywords. This is a language screen, not a full legal review.</li>
+        </ul>
+        <p>A <strong>quality</strong> score is 88% fundamentals and 12% news. A <strong>timing</strong> score is the technical score alone. The headline Dilagent score is a weighted blend of all three pillars. Horizon changes the blend; it does not forecast a future price.</p>
+      </article>
+
+      <article class="app-panel">
+        <p class="kicker">How confidence scores are calculated</p>
+        <h3>The weights this app actually uses</h3>
+        <p>Combined score = weighted mean of the three pillar scores:</p>
+        <table class="wide">
+          <thead><tr><th>Horizon</th><th>Fundamentals</th><th>Technicals</th><th>News</th></tr></thead>
+          <tbody>
+            <tr><td>Up to 10 days</td><td>38%</td><td>32%</td><td>30%</td></tr>
+            <tr><td>Up to 60 days</td><td>50%</td><td>25%</td><td>25%</td></tr>
+            <tr><td>Up to 1 year</td><td>62%</td><td>16%</td><td>22%</td></tr>
+            <tr><td>Beyond 1 year</td><td>70%</td><td>10%</td><td>20%</td></tr>
+          </tbody>
+        </table>
+        <p>Fundamentals themselves are a weighted mean of: profitability 28%, growth 20%, balance sheet 20%, cash 14%, valuation 12%, and optional filing notes 6%. Each sub-score is a banded mapping of published ratios (for example ROE, margins, revenue growth, debt/equity, P/E), not a neural net.</p>
+        <p>Confidence (Low / Medium / High) is a coverage check: whether fundamentals, a 200-day average, and headlines all arrived, how far the pillars disagree, and whether news controversy is severe. It is not a probability of profit.</p>
+        <p>Verdict labels (Investable, Cautious, Not investable) are rule thresholds on quality, timing, and headline vetoes — for example a keyword hit for bankruptcy or fraud can force “Not investable” regardless of the numeric blend.</p>
+      </article>
+
+      <article class="app-panel">
+        <p class="kicker">Language model</p>
+        <h3>What an LLM does and does not do</h3>
+        <p>If a Groq or OpenAI key is present, Dilagent may ask <strong>llama-3.3-70b-versatile</strong> (Groq) or <strong>gpt-4o-mini</strong> (OpenAI) to write the short briefing paragraph only. The model receives the already-computed scores, ratings, and highlights. It does not set pillar scores, does not choose the verdict, and does not invent numbers. If no key is configured, Dilagent writes a template briefing from those same scores. Discover, Watchlist, and the numeric cards never call the model.</p>
+      </article>
+
+      <article class="app-panel">
+        <p class="kicker">Data sources</p>
+        <h3>Where the numbers come from</h3>
+        <ul class="own-look-list">
+          <li><strong>SEC EDGAR</strong> — company tickers and 10-K / 10-Q HTML when a CIK exists.</li>
+          <li><strong>Yahoo Finance</strong> (via yfinance) — prices, statements, and the published ratios used in fundamentals and Discover.</li>
+          <li><strong>NSE EQUITY_L.csv</strong> — official NSE equity list for Indian names, mapped to Yahoo <code>.NS</code> tickers.</li>
+          <li><strong>News RSS</strong> — Financial Times, Reuters Business, CNBC, MarketWatch, BBC Business, Yahoo Finance, plus Google News and Yahoo ticker stories.</li>
+          <li><strong>Your PDF</strong> — an uploaded annual report is indexed locally and can add filing notes to the fundamental score.</li>
+        </ul>
+        <p>Discover screens only Yahoo profile fields Dilagent has actually fetched. Dilagent scores appear on Discover and Watchlist only after an Analytics run in this browser. Fields Dilagent does not store (for example RSI on the Discover screen, or ROCE without a statements pull) show as not available rather than an estimate.</p>
+      </article>
+
+      <article class="app-panel">
+        <p class="kicker">Limitations</p>
+        <h3>What this tool cannot promise</h3>
+        <ul class="own-look-list">
+          <li>Feeds can be delayed, incomplete, or wrong.</li>
+          <li>Company facts change after the last pull.</li>
+          <li>Headline keyword tags can misread context.</li>
+          <li>Ratios are accounting snapshots, not forecasts.</li>
+          <li>Past growth and prices do not guarantee future results.</li>
+          <li>The combined verdict can be wrong.</li>
+        </ul>
+      </article>
+
+      <article class="app-panel">
+        <p class="kicker">Disclaimer</p>
+        <h3>Educational research only</h3>
+        <p>Dilagent is an independent educational research project. It is not a registered investment adviser and does not give personalized investment advice. Do not make an investment decision solely from this app. Read the published filings yourself. The creator and the project are not responsible for decisions you make from these outputs.</p>
+      </article>
+
+      <article class="app-panel">
+        <p class="kicker">Project</p>
+        <h3>About</h3>
+        <p>Dilagent<br />Created by SirNutALot<br /><a href="https://github.com/SirNutALot" target="_blank" rel="noopener">GitHub: github.com/SirNutALot</a></p>
+      </article>
+    </section>
+
+    <footer class="site-foot">
+      <button type="button" class="text-btn" data-view="method" id="open-method">Methodology &amp; sources</button>
+      <span class="muted">Educational research. Not investment advice.</span>
+      <a href="https://github.com/SirNutALot" target="_blank" rel="noopener">GitHub — SirNutALot</a>
+    </footer>
     </div>
     <aside class="flash" id="flash-right" aria-label="More headlines">
-      <p class="kicker">Headlines</p>
-      <ol id="flash-right-list"><li class="muted">Loading tape…</li></ol>
+      <div class="flash-rail">
+        <p class="kicker">Headlines</p>
+        <ol id="flash-right-list"><li class="muted">Loading tape…</li></ol>
+      </div>
     </aside>
   </div>
   <script src="/app.js"></script>

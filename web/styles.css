@@ -420,13 +420,19 @@ button:disabled { opacity: 0.5; cursor: wait; }
 }
 
 .flash {
-  position: sticky;
-  top: 0;
-  height: calc(100vh - var(--head));
-  overflow: auto;
+  position: relative;
+  min-height: calc(100vh - var(--head));
   background: var(--paper);
   border: 0;
   border-radius: 0;
+  padding: 0;
+}
+
+.flash-rail {
+  position: sticky;
+  top: var(--head);
+  height: calc(100vh - var(--head));
+  overflow: auto;
   padding: 16px 12px 24px;
 }
 
@@ -1128,11 +1134,109 @@ table.wide th:not(:first-child) {
 
 .discover-search {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 140px 200px;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 12px;
   align-items: end;
   margin: 18px 0 12px;
 }
+
+.discover-actions {
+  display: flex;
+  gap: 8px;
+  align-items: end;
+}
+
+.discover-search button,
+.discover-actions button {
+  height: 40px;
+  width: auto;
+  white-space: nowrap;
+  padding: 0 16px;
+}
+
+.filter-groups { margin-top: 8px; }
+
+.filter-group {
+  border-top: 1px solid var(--line);
+  padding: 6px 0 10px;
+}
+
+.filter-group summary {
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 8px 0;
+}
+
+.filter-group .filter-grid { margin-top: 4px; }
+.filter-group .muted { margin-top: 10px; }
+
+.compare-box {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 16px 18px 12px;
+  margin: 0 0 16px;
+}
+
+.compare-box h3 { margin: 0 0 10px; }
+
+.compare-meta {
+  color: var(--muted);
+  font-size: 0.82rem;
+  margin: 0 0 14px;
+}
+
+.compare-charts {
+  display: grid;
+  gap: 10px;
+  margin: 0 0 16px;
+}
+
+.cmp-metric { margin: 0 0 8px; }
+
+.cmp-metric strong {
+  display: block;
+  font-size: 0.78rem;
+  margin-bottom: 6px;
+}
+
+.cmp-bar-row {
+  display: grid;
+  grid-template-columns: minmax(90px, 160px) minmax(0, 1fr) 44px;
+  gap: 8px;
+  align-items: center;
+  margin: 0 0 4px;
+  font-size: 0.78rem;
+}
+
+.cmp-track {
+  height: 8px;
+  background: var(--cream);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.cmp-track i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.cmp-track i.is-yes { background: var(--yes); }
+.cmp-track i.is-wait { background: var(--wait); }
+.cmp-track i.is-no { background: var(--no); }
+
+.compare-spark {
+  width: 100%;
+  height: 120px;
+  margin: 8px 0 16px;
+}
+
+.report-check { width: 18px; height: 18px; }
 
 .preset-row {
   display: flex;
@@ -1213,6 +1317,63 @@ table.wide th:not(:first-child) {
 
 .result-count { font-weight: 600; margin: 8px 0 12px; }
 
+.similar-criteria {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  align-items: center;
+  margin: 8px 0 12px;
+}
+
+.similar-criteria label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 0.82rem;
+  color: var(--ink);
+}
+
+.custom-filters { margin-top: 16px; }
+
+.custom-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) 180px minmax(0, 1fr) minmax(0, 1fr) 80px;
+  gap: 8px;
+  margin: 8px 0;
+  align-items: center;
+}
+
+.custom-row input,
+.custom-row select {
+  height: 40px;
+  padding: 0 10px;
+  background: var(--paper);
+  color: var(--ink);
+  border: 1px solid #c5c8ce;
+  border-radius: 4px;
+}
+
+.method-page .app-panel p { color: var(--ink); max-width: 48rem; }
+.method-page .app-panel li { margin: 0 0 8px; }
+
+.site-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+  align-items: center;
+  margin-top: 36px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+  font-size: 0.82rem;
+}
+
+.site-foot a { color: var(--accent); text-decoration: none; font-weight: 500; }
+.site-foot a:hover { text-decoration: underline; }
+.site-foot .text-btn { margin-left: 0; }
+
 @media (max-width: 1200px) {
   .workspace { grid-template-columns: 1fr; }
   .flash { display: none; }
@@ -1255,6 +1416,6 @@ table.wide th:not(:first-child) {
 }
 
 @media (max-width: 900px) {
-  .search-form, .hero, .scores, .split, .upload-row, .combined-grid, .add-grid, .deep-grid, .growth-grid, .dash-grid, .discover-search { grid-template-columns: 1fr; }
+  .search-form, .hero, .scores, .split, .upload-row, .combined-grid, .add-grid, .deep-grid, .growth-grid, .dash-grid, .discover-search, .custom-row, .cmp-bar-row { grid-template-columns: 1fr; }
   .tv-host { height: 360px; }
 }
