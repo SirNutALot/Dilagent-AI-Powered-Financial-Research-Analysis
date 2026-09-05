@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Dilagent · Is this company investable?</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="top">
+    <div class="top-inner">
+      <a class="brand" href="#diligence" data-view="diligence">
+        <span class="mark">Dilagent</span>
+        <span class="brand-sub">Due diligence</span>
+      </a>
+      <nav class="nav" id="site-nav" aria-label="Desk sections">
+        <a href="#diligence" data-view="diligence" class="is-active">Due Diligence</a>
+        <a href="#dashboard" data-view="dashboard">Dashboard</a>
+        <a href="#watchlist" data-view="watchlist">Watchlist</a>
+        <a href="#reports" data-view="reports">Reports</a>
+        <a href="#discover" data-view="discover">Discover</a>
+        <p class="disclaimer nav-note">Educational research only. Not investment advice.</p>
+      </nav>
+      <p class="disclaimer">Educational research only.<br />Not investment advice.</p>
+      <button type="button" class="nav-toggle" id="nav-toggle" aria-expanded="false" aria-controls="site-nav">Menu</button>
+    </div>
+  </header>
+
+  <div class="workspace">
+    <aside class="flash" id="flash-left" aria-label="Market headlines">
+      <p class="kicker">Market tape</p>
+      <ol id="flash-left-list"><li class="muted">Loading tape…</li></ol>
+    </aside>
+    <div class="desk">
+    <section class="search-band" id="desk-search">
+      <form id="form" class="search-form" autocomplete="off">
+        <div class="field company-field">
+          <label for="company">Company</label>
+          <input id="company" name="company" type="text" spellcheck="false" placeholder="Click to browse, or type a name" required />
+          <input type="hidden" id="company-ticker" />
+          <input type="hidden" id="company-listed" />
+          <ul id="suggestions" class="suggestions" hidden></ul>
+        </div>
+        <div class="field horizon-field">
+          <label for="horizon">Horizon</label>
+          <select id="horizon" name="horizon">
+            <option value="1">1 day</option>
+            <option value="5">1 week</option>
+            <option value="10">2 weeks</option>
+            <option value="30">1 month</option>
+            <option value="60">2 months</option>
+            <option value="90" selected>1 quarter</option>
+            <option value="180">6 months</option>
+            <option value="365">1 year</option>
+            <option value="730">2 years</option>
+            <option value="1095">3 years</option>
+            <option value="1825">5 years</option>
+          </select>
+        </div>
+        <button type="submit" id="run">Run diligence</button>
+      </form>
+      <p id="horizon-warn" class="horizon-warn" hidden>
+        Dilagent is only an advisor. Broader horizons are less precise — treat this as a sketch, not a forecast. Results can be wrong.
+      </p>
+      <p class="search-hint">
+        Click the box and scroll — every SEC filer is in the list, plus names you have added.
+        <button type="button" class="text-btn" id="toggle-add">Company not listed?</button>
+      </p>
+      <form id="add-form" class="add-form" hidden autocomplete="off">
+        <p class="add-copy">Add any Yahoo-listed name. Dilagent will use published financials, and a PDF if you have the report.</p>
+        <div class="add-grid">
+          <div class="field add-field">
+            <label for="add-company">Name or symbol</label>
+            <input id="add-company" type="text" spellcheck="false" placeholder="Tata Consultancy or TCS.NS" />
+            <input type="hidden" id="add-ticker" />
+            <ul id="add-suggestions" class="suggestions" hidden></ul>
+          </div>
+          <div class="field">
+            <label for="add-filing">Optional report (PDF)</label>
+            <input id="add-filing" type="file" accept="application/pdf" />
+          </div>
+          <button type="submit" id="add-run">Add and run</button>
+        </div>
+        <p id="add-status" class="muted"></p>
+      </form>
+    </section>
+    <main id="desk-main">
+    <section id="empty" class="empty">
+      <p class="kicker">Waiting for a name</p>
+      <h2>Ask whether a company is investable.</h2>
+        <p>Pick a SEC filer from the list — scroll to see every name — or add a company that is not there. After a run, the three pillar scores are confidence percentages: hover one to see why it landed there.</p>
+    </section>
+
+    <section id="error" class="error" hidden></section>
+    <section id="loading" hidden>
+      <p class="kicker">Working</p>
+      <h2 id="loading-text">Reading the 10-K and latest 10-Q…</h2>
+    </section>
+
+    <section id="result" hidden>
+      <header class="hero">
+        <div class="hero-copy">
+          <p class="kicker" id="meta"></p>
+          <h2 id="name"></h2>
+          <p class="price" id="price"></p>
+          <p class="filing-line" id="filing-line"></p>
+          <p class="sources" id="sources"></p>
+        </div>
+        <div class="stamp" id="stamp">
+          <p class="stamp-kicker">Combined verdict</p>
+          <p class="stamp-label" id="verdict-label"></p>
+          <p class="stamp-score"><span id="verdict-score"></span><small>%</small></p>
+          <p class="stamp-stance" id="verdict-stance"></p>
+        </div>
+      </header>
+
+      <p class="briefing" id="briefing"></p>
+      <p class="accuracy-note" id="accuracy-note">
+        These results can be wrong. Dilagent is an educational advisor, not a prediction or a recommendation.
+        Read the published numbers yourself if you want to check the story.
+      </p>
+
+      <p class="score-legend">
+        These percentages are confidence in each pillar, not a predicted return.
+        Hover a score to see why it landed there. 70%+ is constructive, 45–69% is mixed, below 45% is a warning.
+      </p>
+      <div class="scores">
+        <article id="fund-card" class="score-card" tabindex="0">
+          <p class="kicker">Fundamentals</p>
+          <p class="big" id="fund-score"></p>
+          <p class="score-rating" id="fund-rating"></p>
+          <p class="tip" id="fund-tip"></p>
+        </article>
+        <article id="tech-card" class="score-card" tabindex="0">
+          <p class="kicker">Technicals</p>
+          <p class="big" id="tech-score"></p>
+          <p class="score-rating" id="tech-rating"></p>
+          <p class="tip" id="tech-tip"></p>
+        </article>
+        <article id="news-card" class="score-card" tabindex="0">
+          <p class="kicker">News / external</p>
+          <p class="big" id="news-score"></p>
+          <p class="score-rating" id="news-rating"></p>
+          <p class="tip" id="news-tip"></p>
+        </article>
+      </div>
+      <p class="own-look-link">
+        <a href="#own-look" id="open-own-look">Do your own fundamental analysis</a>
+        <span class="muted">Quarterly results, profit and loss, balance sheet, cash flow, ratios, and growth rates.</span>
+      </p>
+
+      <div class="split">
+        <section>
+          <h3>Why investable</h3>
+          <ul id="for"></ul>
+        </section>
+        <section>
+          <h3>Why not, or wait</h3>
+          <ul id="against"></ul>
+        </section>
+      </div>
+
+      <section class="chart-block">
+        <div class="chart-head">
+          <h3>Chart</h3>
+          <a id="tv-link" class="tv-link" href="#" target="_blank" rel="noopener">Open in TradingView</a>
+        </div>
+        <div id="tv-host" class="tv-host"></div>
+      </section>
+
+      <div class="split metrics-news">
+        <section>
+          <h3>Fundamental snapshot</h3>
+          <p class="muted">Rest your cursor on a name if you want it explained.</p>
+          <table id="fund-table"></table>
+          <h3 class="spaced">Technical snapshot</h3>
+          <table id="tech-table"></table>
+        </section>
+        <section>
+          <h3>Headline scan</h3>
+          <p class="muted" id="news-summary"></p>
+          <ol id="news-list"></ol>
+        </section>
+      </div>
+
+      <section class="deep own-look" id="own-look">
+        <div class="deep-head">
+          <div>
+            <p class="kicker">Independent check</p>
+            <h3>Do your own fundamental analysis</h3>
+            <p class="own-look-lead">Open the published financials and judge the company yourself, instead of taking the advisor score as the last word. Rest your cursor on a name if you want a short explanation.</p>
+            <ul class="own-look-list">
+              <li>Quarterly results</li>
+              <li>Annual profit &amp; loss</li>
+              <li>Balance sheet</li>
+              <li>Cash flows</li>
+              <li>Valuation and profitability ratios</li>
+              <li>Compounded sales, profit, and price growth</li>
+            </ul>
+            <p class="muted">These are numbers the company already reported — not a Dilagent guess about the future.</p>
+          </div>
+          <button type="button" id="toggle-deep">Open the books</button>
+        </div>
+        <div id="deep-body" hidden>
+          <div class="growth-grid" id="growth-cards"></div>
+          <div class="deep-grid" id="deep-ratios"></div>
+          <div id="deep-statements"></div>
+        </div>
+      </section>
+
+      <section class="combined" id="combined">
+        <p class="kicker">Combined verdict</p>
+        <h3 id="combined-label"></h3>
+        <p class="combined-score" id="combined-score"></p>
+        <p id="combined-summary"></p>
+        <div class="combined-grid" id="combined-grid"></div>
+      </section>
+
+      <form id="filing-form" class="upload">
+        <label for="filing">Replace with your own PDF filing</label>
+        <div class="upload-row">
+          <input id="filing" type="file" accept="application/pdf" />
+          <button type="submit" class="ghost" id="upload">Index filing</button>
+        </div>
+        <p id="filing-status" class="muted"></p>
+      </form>
+    </section>
+    </main>
+    <section id="view-dashboard" class="app-page" hidden>
+      <p class="kicker">Dashboard</p>
+      <h2>Research home</h2>
+      <p class="muted">A view of what you are following and what you have already run. Detailed analysis stays on Due Diligence.</p>
+      <div class="action-row" id="dash-actions">
+        <button type="button" data-go="diligence">Run Due Diligence</button>
+        <button type="button" class="ghost" data-go="discover">Discover companies</button>
+        <button type="button" class="ghost" data-go="watchlist">View Watchlist</button>
+        <button type="button" class="ghost" data-go="reports">View Reports</button>
+      </div>
+      <div class="dash-grid">
+        <article class="app-panel">
+          <p class="kicker">Favourite companies</p>
+          <h3>Watchlist</h3>
+          <div id="dash-favs"></div>
+        </article>
+        <article class="app-panel">
+          <p class="kicker">Recent research</p>
+          <h3>Latest runs</h3>
+          <div id="dash-recent"></div>
+        </article>
+      </div>
+      <article class="app-panel">
+        <p class="kicker">Research changes</p>
+        <h3>What moved</h3>
+        <div id="dash-events"></div>
+      </article>
+    </section>
+
+    <section id="view-watchlist" class="app-page" hidden>
+      <p class="kicker">Watchlist</p>
+      <h2>Companies I am following</h2>
+      <p class="muted">Your shortlist only. Open a name to run Due Diligence — the full analysis is not repeated here.</p>
+      <div class="app-toolbar">
+        <input id="watch-q" type="search" placeholder="Search companies" />
+        <select id="watch-market"><option value="">Market</option></select>
+        <select id="watch-sector"><option value="">Sector</option></select>
+        <select id="watch-verdict"><option value="">Verdict</option></select>
+        <select id="watch-change">
+          <option value="">Score change</option>
+          <option value="up">Improving</option>
+          <option value="down">Declining</option>
+        </select>
+        <select id="watch-sort">
+          <option value="name">Sort: name</option>
+          <option value="score">Sort: score</option>
+          <option value="at">Sort: last analyzed</option>
+        </select>
+      </div>
+      <div class="table-wrap">
+        <table class="wide data-table" id="watch-table">
+          <thead>
+            <tr>
+              <th></th>
+              <th>Company</th>
+              <th>Market</th>
+              <th>Industry</th>
+              <th>Dilagent score</th>
+              <th>Verdict</th>
+              <th>Change</th>
+              <th>Last analyzed</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="watch-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="view-reports" class="app-page" hidden>
+      <p class="kicker">Reports</p>
+      <h2>Research history</h2>
+      <p class="muted">Previous Due Diligence runs in this browser. View report opens the existing analysis desk.</p>
+      <div class="app-toolbar">
+        <input id="report-q" type="search" placeholder="Search reports" />
+        <select id="report-verdict"><option value="">Verdict</option></select>
+        <select id="report-sort">
+          <option value="at">Sort: date</option>
+          <option value="score">Sort: score</option>
+          <option value="name">Sort: company</option>
+        </select>
+      </div>
+      <div id="report-cards" class="report-grid"></div>
+    </section>
+
+    <section id="view-discover" class="app-page" hidden>
+      <p class="kicker">Discover</p>
+      <h2>What to research next</h2>
+      <p class="muted">Search and filter published financials. Dilagent scores appear only after you have run Due Diligence.</p>
+      <form id="discover-form" class="discover-search" autocomplete="off">
+        <div class="field">
+          <label for="discover-q">Company search</label>
+          <input id="discover-q" type="search" placeholder="Search companies, ticker, industry, sector, or market" />
+        </div>
+        <button type="submit">Search</button>
+        <button type="button" class="ghost" id="discover-similar">Find similar companies</button>
+      </form>
+      <p class="muted" id="similar-note" hidden></p>
+      <div id="similar-box" class="similar-box" hidden></div>
+      <div class="preset-row" id="discover-presets">
+        <button type="button" class="ghost" data-preset="fundamentals">Strong Fundamentals</button>
+        <button type="button" class="ghost" data-preset="growth">High Growth</button>
+        <button type="button" class="ghost" data-preset="lowdebt">Low Debt</button>
+        <button type="button" class="ghost" data-preset="profit">Profitable Companies</button>
+        <button type="button" class="ghost" data-preset="earnings">Improving Earnings</button>
+        <button type="button" class="ghost" data-preset="value">Value Candidates</button>
+        <button type="button" class="ghost" data-preset="score">High Dilagent Score</button>
+        <button type="button" class="ghost" data-preset="similar">Similar to a Company</button>
+      </div>
+      <details class="filter-box" open>
+        <summary>Financial filters</summary>
+        <div class="filter-grid">
+          <fieldset>
+            <legend>Company</legend>
+            <label>Market <select id="f-market"><option value="">Any</option></select></label>
+            <label>Sector <select id="f-sector"><option value="">Any</option></select></label>
+            <label>Industry <select id="f-industry"><option value="">Any</option></select></label>
+            <label>Market cap
+              <select id="f-cap">
+                <option value="">Any</option>
+                <option value="small">Under $2B</option>
+                <option value="mid">$2B–$10B</option>
+                <option value="large">$10B–$200B</option>
+                <option value="mega">Over $200B</option>
+              </select>
+            </label>
+          </fieldset>
+          <fieldset>
+            <legend>Growth</legend>
+            <label>Revenue growth
+              <select id="f-rev">
+                <option value="">Any</option>
+                <option value="pos">Positive</option>
+                <option value="10">Above 10%</option>
+                <option value="25">Above 25%</option>
+                <option value="neg">Declining</option>
+              </select>
+            </label>
+            <label>Earnings growth
+              <select id="f-earn">
+                <option value="">Any</option>
+                <option value="pos">Positive</option>
+                <option value="10">Above 10%</option>
+                <option value="25">Above 25%</option>
+                <option value="neg">Declining</option>
+              </select>
+            </label>
+            <label>Earnings trend
+              <select id="f-trend">
+                <option value="">Any</option>
+                <option value="improving">Improving</option>
+                <option value="stable">Stable</option>
+                <option value="declining">Declining</option>
+              </select>
+            </label>
+            <label>Earnings events
+              <select id="f-event">
+                <option value="">Any</option>
+                <option value="upcoming">Upcoming earnings</option>
+                <option value="recent">Recent earnings</option>
+              </select>
+            </label>
+          </fieldset>
+          <fieldset>
+            <legend>Profitability</legend>
+            <label>ROE <select id="f-roe"><option value="">Any</option><option value="pos">Positive</option><option value="10">Above 10%</option><option value="20">Above 20%</option></select></label>
+            <label>ROA <select id="f-roa"><option value="">Any</option><option value="pos">Positive</option><option value="5">Above 5%</option></select></label>
+            <label>Operating margin <select id="f-opm"><option value="">Any</option><option value="pos">Positive</option><option value="15">Above 15%</option></select></label>
+            <label>Net margin <select id="f-npm"><option value="">Any</option><option value="pos">Positive</option></select></label>
+          </fieldset>
+          <fieldset>
+            <legend>Valuation &amp; health</legend>
+            <label>P/E <select id="f-pe"><option value="">Any</option><option value="15">Under 15</option><option value="25">Under 25</option></select></label>
+            <label>Price / Book <select id="f-pb"><option value="">Any</option><option value="3">Under 3</option></select></label>
+            <label>EV / EBITDA <select id="f-ev"><option value="">Any</option><option value="12">Under 12</option></select></label>
+            <label>Debt / Equity <select id="f-de"><option value="">Any</option><option value="50">Under 50</option><option value="100">Under 100</option></select></label>
+          </fieldset>
+          <fieldset>
+            <legend>Dilagent</legend>
+            <label>Dilagent score <select id="f-dscore"><option value="">Any</option><option value="70">70%+</option><option value="45">45%+</option></select></label>
+            <label>Fundamentals <select id="f-dfund"><option value="">Any</option><option value="70">70%+</option></select></label>
+            <label>Verdict <select id="f-dverdict"><option value="">Any</option></select></label>
+          </fieldset>
+        </div>
+      </details>
+      <p class="result-count" id="discover-count">Search or apply a preset to see published matches.</p>
+      <div class="table-wrap">
+        <table class="wide data-table" id="discover-table">
+          <thead>
+            <tr>
+              <th></th>
+              <th>Company</th>
+              <th>Sector</th>
+              <th>Market cap</th>
+              <th>Revenue growth</th>
+              <th>Earnings growth</th>
+              <th>ROE</th>
+              <th>P/E</th>
+              <th>Dilagent score</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="discover-body"></tbody>
+        </table>
+      </div>
+    </section>
+    </div>
+    <aside class="flash" id="flash-right" aria-label="More headlines">
+      <p class="kicker">Headlines</p>
+      <ol id="flash-right-list"><li class="muted">Loading tape…</li></ol>
+    </aside>
+  </div>
+  <script src="/app.js"></script>
+  <script src="/desk.js"></script>
+</body>
+</html>

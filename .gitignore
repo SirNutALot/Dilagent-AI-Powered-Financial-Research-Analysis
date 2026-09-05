@@ -1,0 +1,17 @@
+.env
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+spvenv/
+.venv/
+venv/
+data/cache/*
+!data/cache/.gitkeep
+data/filings/**
+!data/filings/.gitkeep
+data/custom_companies.json
+.idea/
+.vscode/
+.DS_Store
