@@ -274,7 +274,6 @@ def published_sources(ticker: str, website: str | None = None) -> list[dict[str,
     if ticker:
         add("Yahoo Finance profile", f"https://finance.yahoo.com/quote/{ticker}")
         add("Yahoo Finance financials", f"https://finance.yahoo.com/quote/{ticker}/financials")
-        add("TradingView chart", f"https://www.tradingview.com/chart/?symbol={ticker}")
     return sources
 
 

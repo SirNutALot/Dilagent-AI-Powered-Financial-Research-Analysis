@@ -87,6 +87,16 @@
     if (window.openDiligence) window.openDiligence(row, run !== false);
   }
 
+  function bindRowSelect(tr, box) {
+    tr.classList.add("is-clickable", "is-selecting");
+    tr.addEventListener("click", (event) => {
+      if (event.target.closest("input[type='checkbox']")) return;
+      event.preventDefault();
+      box.checked = !box.checked;
+      box.dispatchEvent(new Event("change"));
+    });
+  }
+
   function tone(score) {
     if (score == null || Number.isNaN(Number(score))) return "";
     if (Number(score) >= 70) return "yes";
@@ -217,6 +227,28 @@
     return rows;
   }
 
+  function pruneReports() {
+    if (!window.writeDesk) return;
+    const state = desk();
+    const reports = uniqueCompanies(state.reports || []);
+    if (reports.length === (state.reports || []).length) return;
+    window.writeDesk({ ...state, reports });
+  }
+
+  function removeReport(row) {
+    if (!row?.ticker || !window.writeDesk) return;
+    const state = desk();
+    const reports = (state.reports || []).filter((item) => item.ticker !== row.ticker);
+    pickedReportKeys.delete(reportKey(row));
+    window.writeDesk({ ...state, reports });
+    const box = $("compare-box");
+    if (box) {
+      box.hidden = true;
+      box.innerHTML = "";
+    }
+    paintReports();
+  }
+
   function paintDashboard() {
     const favs = $("dash-favs");
     const recent = $("dash-recent");
@@ -282,9 +314,86 @@
   }
 
   let watchManaging = false;
+  let watchMode = "";
+  let reportManaging = false;
+  let reportMode = "";
+  const pickedWatch = new Set();
+  const pickedReportKeys = new Set();
   let watchQuotes = {};
   let watchSparks = {};
   let watchHydrateKey = "";
+
+  function reportKey(row) {
+    return `${row.ticker || ""}::${row.at || 0}`;
+  }
+
+  function tvSymbol(ticker, exchange) {
+    const map = {
+      NMS: "NASDAQ", NGM: "NASDAQ", NCM: "NASDAQ", NAS: "NASDAQ", NASDAQ: "NASDAQ",
+      NYQ: "NYSE", NYE: "NYSE", NYSE: "NYSE", PCX: "NYSEARCA",
+      ASE: "AMEX", BTS: "BATS", NSI: "NSE", NSE: "NSE", BSE: "BSE",
+    };
+    const raw = (ticker || "").toUpperCase();
+    const core = raw.split(".")[0];
+    const suffix = raw.includes(".") ? raw.split(".").slice(1).join(".") : "";
+    if (suffix === "NS" || suffix === "NSE") return `NSE:${core}`;
+    if (suffix === "BO" || suffix === "BSE") return `BSE:${core}`;
+    const prefix = map[(exchange || "").toUpperCase()];
+    return prefix ? `${prefix}:${core}` : raw;
+  }
+
+  function embedTradingView(host, ticker, exchange) {
+    if (!host) return;
+    host.innerHTML = "";
+    const container = document.createElement("div");
+    container.className = "tradingview-widget-container";
+    const widget = document.createElement("div");
+    widget.className = "tradingview-widget-container__widget";
+    container.appendChild(widget);
+    const script = document.createElement("script");
+    script.src = "https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js";
+    script.async = true;
+    script.text = JSON.stringify({
+      autosize: true,
+      symbol: tvSymbol(ticker, exchange),
+      interval: "D",
+      timezone: "Etc/UTC",
+      theme: "light",
+      style: "1",
+      locale: "en",
+      allow_symbol_change: false,
+      calendar: false,
+      hide_top_toolbar: false,
+      hide_legend: false,
+      withdateranges: true,
+      save_image: true,
+      support_host: "https://www.tradingview.com",
+    });
+    container.appendChild(script);
+    host.appendChild(container);
+  }
+
+  function inspectWatch(row) {
+    const box = $("watch-inspect");
+    if (!box) return;
+    const quote = mergeQuote(row);
+    box.hidden = false;
+    box.innerHTML = `<div class="inspect-head">
+        <div>
+          <p class="kicker">Watchlist</p>
+          <h3>${row.name} <span class="muted">${row.ticker}</span></h3>
+          <p>${moneyShort(quote.price)} · ${pct(quote.day_change_pct)} · ${cap(quote.market_cap)}</p>
+        </div>
+        <div class="inspect-actions">
+          <button type="button" id="inspect-analytics">Analytics</button>
+          <button type="button" class="ghost" id="inspect-close">Close</button>
+        </div>
+      </div>
+      <div class="tv-host" id="inspect-tv"></div>`;
+    $("inspect-analytics")?.addEventListener("click", () => openCompany(row, true));
+    $("inspect-close")?.addEventListener("click", () => { box.hidden = true; });
+    embedTradingView($("inspect-tv"), row.ticker, row.exchange);
+  }
 
   function groupWatchRows(rows) {
     const used = new Set();
@@ -326,16 +435,26 @@
     };
   }
 
-  function setWatchManaging(on) {
-    watchManaging = Boolean(on);
-    const bar = $("watch-manage-bar");
-    const toggle = $("watch-manage");
-    if (bar) bar.hidden = !watchManaging;
-    if (toggle) toggle.hidden = watchManaging;
+  function setWatchMode(mode) {
+    watchMode = mode || "";
+    watchManaging = Boolean(watchMode);
+    const remove = $("watch-remove-btn");
+    const cancel = $("watch-manage-cancel");
+    const compare = $("watch-compare-btn");
+    if (compare) compare.textContent = watchMode === "compare" ? "Compare selected" : "Compare";
+    if (remove) {
+      remove.hidden = false;
+      remove.textContent = watchMode === "remove" ? "Confirm remove" : "Remove";
+    }
+    if (cancel) cancel.hidden = !watchManaging;
     document.querySelectorAll("#watch-table .manage-only").forEach((node) => {
       node.hidden = !watchManaging;
     });
     paintWatch(false);
+  }
+
+  function setWatchManaging(on) {
+    setWatchMode(on ? "compare" : "");
   }
 
   async function hydrateWatchMarket(rows) {
@@ -358,6 +477,11 @@
   }
 
   function paintWatch(refresh = true) {
+    const hint = $("watch-compare");
+    if (hint && hint.querySelector(".empty-note") && !hint.querySelector("table")) {
+      hint.hidden = true;
+      hint.innerHTML = "";
+    }
     const body = $("watch-body");
     if (!body) return;
     const query = ($("watch-q")?.value || "").trim().toLowerCase();
@@ -398,7 +522,7 @@
     body.innerHTML = "";
     if (!rows.length) {
       const tr = document.createElement("tr");
-      tr.innerHTML = `<td colspan="${watchManaging ? 15 : 14}" class="empty-note">No saved names match. Search above to add a company without running Analytics.</td>`;
+      tr.innerHTML = `<td colspan="${watchManaging ? 14 : 13}" class="empty-note">No saved names match. Search above to add a company without running Analytics.</td>`;
       body.appendChild(tr);
       if (refresh) hydrateWatchMarket(watchedRows());
       return;
@@ -407,20 +531,29 @@
       const quote = mergeQuote(row);
       const spark = watchSparks[row.ticker] || {};
       const tr = document.createElement("tr");
+      let box = null;
       if (watchManaging) {
         const check = document.createElement("td");
         check.className = "manage-only";
-        check.innerHTML = `<input type="checkbox" class="watch-check" value="${row.ticker}" />`;
+        box = document.createElement("input");
+        box.type = "checkbox";
+        box.className = "watch-check";
+        box.value = row.ticker;
+        box.checked = pickedWatch.has(row.ticker);
+        box.addEventListener("change", () => {
+          if (box.checked) pickedWatch.add(row.ticker);
+          else pickedWatch.delete(row.ticker);
+        });
+        check.appendChild(box);
         tr.appendChild(check);
       }
-      const star = document.createElement("td");
-      star.appendChild(starButton(row));
       const company = document.createElement("td");
+      company.className = "watch-company";
       const nameBtn = document.createElement("button");
       nameBtn.type = "button";
       nameBtn.className = "watch-name";
       nameBtn.textContent = row.name;
-      nameBtn.addEventListener("click", () => openCompany(row, true));
+      if (!watchManaging) nameBtn.addEventListener("click", () => inspectWatch(row));
       company.appendChild(nameBtn);
       if (row.alternates && row.alternates.length) {
         const note = document.createElement("div");
@@ -431,22 +564,26 @@
       const actions = document.createElement("td");
       const wrap = document.createElement("div");
       wrap.className = "row-actions";
-      wrap.appendChild(actionButton("Run Analytics", "", () => openCompany(row, true)));
+      wrap.appendChild(actionButton("Analytics", "", () => {
+        if (!watchManaging) openCompany(row, true);
+      }));
       actions.appendChild(wrap);
+      if (box) bindRowSelect(tr, box);
       const day = quote.day_change_pct;
       const dayClass = day == null ? "chg" : day > 0 ? "chg up" : day < 0 ? "chg down" : "chg";
-      tr.appendChild(star);
       tr.appendChild(company);
       tr.insertAdjacentHTML(
         "beforeend",
-        `<td>${row.ticker}</td><td>${moneyShort(quote.price)}</td><td class="${dayClass}">${pct(day)}</td><td>${cap(quote.market_cap)}</td><td>${pct(quote.revenue_growth)}</td><td>${pct(quote.earnings_growth)}</td><td>${pct(quote.roe)}</td><td>${num(quote.pe)}</td><td>${scoreText(row.score)}</td>`
+        `<td class="watch-num">${row.ticker}</td><td class="watch-num">${moneyShort(quote.price)}</td><td class="watch-num ${dayClass}">${pct(day)}</td><td class="watch-num">${cap(quote.market_cap)}</td><td class="watch-num">${pct(quote.revenue_growth)}</td><td class="watch-num">${pct(quote.earnings_growth)}</td><td class="watch-num">${pct(quote.roe)}</td><td class="watch-num">${num(quote.pe)}</td><td class="watch-num">${scoreText(row.score)}</td>`
       );
       const verdictCell = document.createElement("td");
+      verdictCell.className = "watch-verdict";
       verdictCell.innerHTML = row.label
         ? `<span class="pill ${row.investable || tone(row.score)}">${row.label}</span>`
         : `<span class="muted">Not analyzed</span>`;
       tr.appendChild(verdictCell);
       const trend = document.createElement("td");
+      trend.className = "col-text";
       trend.innerHTML = sparkSvg(spark.closes);
       if (spark.week_return != null) {
         trend.insertAdjacentHTML("beforeend", `<div class="alt-note">${pct(spark.week_return)} 1w</div>`);
@@ -458,18 +595,50 @@
     if (refresh) hydrateWatchMarket(rows);
   }
 
-  function selectedReports() {
-    return [...document.querySelectorAll(".report-check:checked")].map((node) => Number(node.value));
+  function selectedReportRows() {
+    document.querySelectorAll(".report-check").forEach((node) => {
+      if (node.checked) pickedReportKeys.add(node.value);
+      else pickedReportKeys.delete(node.value);
+    });
+    return (desk().reports || []).filter((row) => pickedReportKeys.has(reportKey(row)));
+  }
+
+  function setReportMode(mode) {
+    reportMode = mode || "";
+    reportManaging = Boolean(reportMode);
+    const remove = $("report-remove-btn");
+    const cancel = $("report-manage-cancel");
+    const compare = $("report-compare");
+    if (compare) compare.textContent = reportMode === "compare" ? "Compare selected" : "Compare";
+    if (remove) {
+      remove.hidden = false;
+      remove.textContent = reportMode === "remove" ? "Confirm remove" : "Remove";
+    }
+    if (cancel) cancel.hidden = !reportManaging;
+    document.querySelectorAll("#report-table .manage-only").forEach((node) => {
+      node.hidden = !reportManaging;
+    });
+    paintReports();
+  }
+
+  function setReportManaging(on) {
+    setReportMode(on ? "compare" : "");
   }
 
   function paintReports() {
+    const hint = $("compare-box");
+    if (hint && hint.querySelector(".empty-note") && !hint.querySelector("table")) {
+      hint.hidden = true;
+      hint.innerHTML = "";
+    }
     const body = $("report-body");
     const host = $("report-cards");
     if (!body && !host) return;
     const query = ($("report-q")?.value || "").trim().toLowerCase();
     const verdict = $("report-verdict")?.value || "";
     const sort = $("report-sort")?.value || "at";
-    let rows = [...(desk().reports || [])];
+    pruneReports();
+    let rows = uniqueCompanies(desk().reports || []);
     fillSelect($("report-verdict"), rows.map((row) => row.label), "Verdict");
     rows = rows.filter((row) => {
       const blob = `${row.name} ${row.ticker}`.toLowerCase();
@@ -485,31 +654,49 @@
     if (body) {
       body.innerHTML = "";
       if (!rows.length) {
-        body.innerHTML = `<tr><td colspan="7" class="empty-note">No reports yet. Run Analytics to generate a historical snapshot. Watched names do not appear here until they have been analyzed.</td></tr>`;
+        body.innerHTML = `<tr><td colspan="${reportManaging ? 7 : 6}" class="empty-note">No reports yet. Run Analytics to generate a historical snapshot. Watched names do not appear here until they have been analyzed.</td></tr>`;
         return;
       }
+      document.querySelectorAll("#report-table .manage-only").forEach((node) => {
+        node.hidden = !reportManaging;
+      });
       const latest = uniqueCompanies(desk().reports || []).map((row) => `${row.ticker}-${row.at}`);
       rows.forEach((row) => {
         const tr = document.createElement("tr");
         tr.className = "is-clickable";
-        const check = document.createElement("td");
-        check.innerHTML = `<input type="checkbox" class="report-check" value="${(desk().reports || []).indexOf(row)}" />`;
+        if (reportManaging) {
+          const check = document.createElement("td");
+          check.className = "manage-only";
+          const box = document.createElement("input");
+          box.type = "checkbox";
+          box.className = "report-check";
+          box.value = reportKey(row);
+          box.checked = pickedReportKeys.has(box.value);
+          box.addEventListener("change", () => {
+            if (box.checked) pickedReportKeys.add(box.value);
+            else pickedReportKeys.delete(box.value);
+          });
+          check.appendChild(box);
+          tr.appendChild(check);
+        }
         const company = document.createElement("td");
+        company.className = "report-company";
         company.innerHTML = `<strong>${row.name}</strong><div class="muted">${row.ticker}</div>`;
         const status = latest.includes(`${row.ticker}-${row.at}`) ? "Latest stored" : "Earlier run";
-        tr.appendChild(check);
         tr.appendChild(company);
-        tr.insertAdjacentHTML("beforeend", `<td>${scoreText(row.score)}</td>`);
+        tr.insertAdjacentHTML("beforeend", `<td class="col-num">${scoreText(row.score)}</td>`);
         const verdictCell = document.createElement("td");
+        verdictCell.className = "watch-verdict";
         verdictCell.innerHTML = row.label
           ? `<span class="pill ${row.investable || tone(row.score)}">${row.label}</span>`
           : "—";
         tr.appendChild(verdictCell);
-        tr.insertAdjacentHTML("beforeend", `<td>${row.horizon || "—"}</td><td>${when(row.at)}</td><td class="muted">${status}</td>`);
-        tr.addEventListener("click", (event) => {
-          if (event.target.closest("input")) return;
-          openCompany(row, true);
-        });
+        tr.insertAdjacentHTML("beforeend", `<td class="col-text">${row.horizon || "—"}</td><td class="col-text">${when(row.at)}</td><td class="col-text muted">${status}</td>`);
+        if (reportManaging) {
+          bindRowSelect(tr, box);
+        } else {
+          tr.addEventListener("click", () => openCompany(row, false));
+        }
         body.appendChild(tr);
       });
     }
@@ -518,14 +705,17 @@
   function compareReports() {
     const box = $("compare-box");
     if (!box) return;
-    const all = desk().reports || [];
-    const picked = selectedReports().map((index) => all[index]).filter(Boolean);
+    if (reportMode !== "compare") {
+      setReportMode("compare");
+      return;
+    }
+    const picked = selectedReportRows();
     if (picked.length < 2) {
       box.hidden = false;
       box.innerHTML = `<p class="empty-note">Select at least two historical reports, then compare.</p>`;
       return;
     }
-    const headers = picked.map((row) => `${row.name}<div class="muted">${when(row.at)} · ${row.horizon || "—"}</div>`);
+    const headers = picked.map((row) => `<div class="cmp-head"><strong>${row.name || row.ticker}</strong><div class="muted">${row.ticker} · ${when(row.at)} · ${row.horizon || "—"}</div></div>`);
     const metrics = [
       ["Status", () => "Historical report"],
       ["Overall score", (row) => scoreText(row.score)],
@@ -558,7 +748,7 @@
         const value = row[key];
         const width = value == null ? 0 : Math.max(0, Math.min(100, Number(value)));
         const klass = tone(value);
-        return `<div class="cmp-bar-row"><span>${row.ticker}</span><div class="cmp-track"><i class="${klass === "yes" ? "is-yes" : klass === "cautious" ? "is-wait" : klass === "no" ? "is-no" : ""}" style="width:${width}%"></i></div><span>${scoreText(value)}</span></div>`;
+        return `<div class="cmp-bar-row"><span>${compareName(row)}</span><div class="cmp-track"><i class="${klass === "yes" ? "is-yes" : klass === "cautious" ? "is-wait" : klass === "no" ? "is-no" : ""}" style="width:${width}%"></i></div><span>${scoreText(value)}</span></div>`;
       }).join("");
       return `<div class="cmp-metric"><strong>${label}</strong>${bars}</div>`;
     }).join("");
@@ -599,6 +789,13 @@
       </table></div>`;
   }
 
+  function compareName(row) {
+    const name = row.name || row.ticker || "";
+    const ticker = row.ticker || "";
+    if (!ticker || name === ticker) return name || ticker;
+    return `${name} (${ticker})`;
+  }
+
   function metricBars(picked, label, key, format) {
     const usable = picked.filter((row) => row[key] != null && !Number.isNaN(Number(row[key])));
     if (!usable.length) return "";
@@ -606,7 +803,7 @@
     const bars = picked.map((row) => {
       const value = row[key];
       const width = value == null ? 0 : Math.min(100, (Math.abs(Number(value)) / max) * 100);
-      return `<div class="cmp-bar-row"><span>${row.ticker}</span><div class="cmp-track"><i style="width:${width}%"></i></div><span>${format(value)}</span></div>`;
+      return `<div class="cmp-bar-row"><span>${compareName(row)}</span><div class="cmp-track"><i style="width:${width}%"></i></div><span>${format(value)}</span></div>`;
     }).join("");
     return `<div class="cmp-metric"><strong>${label}</strong>${bars}</div>`;
   }
@@ -622,7 +819,7 @@
         const value = row[key];
         const width = value == null ? 0 : Math.max(0, Math.min(100, Number(value)));
         const klass = tone(value);
-        return `<div class="cmp-bar-row"><span>${row.ticker}</span><div class="cmp-track"><i class="${klass === "yes" ? "is-yes" : klass === "cautious" ? "is-wait" : klass === "no" ? "is-no" : ""}" style="width:${width}%"></i></div><span>${scoreText(value)}</span></div>`;
+        return `<div class="cmp-bar-row"><span>${compareName(row)}</span><div class="cmp-track"><i class="${klass === "yes" ? "is-yes" : klass === "cautious" ? "is-wait" : klass === "no" ? "is-no" : ""}" style="width:${width}%"></i></div><span>${scoreText(value)}</span></div>`;
       }).join("");
       return `<div class="cmp-metric"><strong>${label}</strong>${bars}</div>`;
     }).join("");
@@ -631,10 +828,18 @@
   async function compareWatch() {
     const box = $("watch-compare");
     if (!box) return;
-    const tickers = [...document.querySelectorAll(".watch-check:checked")].map((node) => node.value);
+    if (watchMode !== "compare") {
+      setWatchMode("compare");
+      return;
+    }
+    document.querySelectorAll(".watch-check").forEach((node) => {
+      if (node.checked) pickedWatch.add(node.value);
+      else pickedWatch.delete(node.value);
+    });
+    const tickers = [...pickedWatch];
     if (tickers.length < 2) {
       box.hidden = false;
-      box.innerHTML = `<p class="empty-note">Select at least two companies on your Watchlist, then compare.</p>`;
+      box.innerHTML = `<p class="empty-note">Tick at least two companies on your Watchlist, then compare.</p>`;
       return;
     }
     const byTicker = Object.fromEntries(watchedRows().map((row) => [row.ticker, row]));
@@ -717,11 +922,13 @@
     box.innerHTML = `<p class="kicker">Watchlist comparison</p>
       <h3>Companies you are tracking</h3>
       <p class="compare-meta">This compares the companies on your Watchlist, not historical Analytics reports. Unanalyzed names show — / Not analyzed. Missing published fields show as —.</p>
+      <div class="dual-charts">${picked.slice(0, 4).map((row, index) => `<div><p class="kicker">${compareName(row)}</p><div class="tv-host" id="watch-tv-${index}"></div></div>`).join("")}</div>
       <div class="compare-charts">${scoreBars(picked)}${extraCharts}</div>
       <div class="table-wrap"><table class="wide data-table">
         <thead><tr><th>Metric</th>${headers.map((item) => `<th>${item}</th>`).join("")}</tr></thead>
         <tbody>${tableRows}</tbody>
       </table></div>`;
+    picked.slice(0, 4).forEach((row, index) => embedTradingView($(`watch-tv-${index}`), row.ticker, row.exchange));
   }
 
   function researchMap() {
@@ -993,6 +1200,171 @@
     ["custom", "Custom range"],
   ];
 
+  const COUNTRY_CATALOG = [
+    "Argentina", "Australia", "Austria", "Bahrain", "Bangladesh", "Belgium", "Brazil",
+    "Canada", "Chile", "China", "Colombia", "Czech Republic", "Denmark", "Egypt",
+    "Finland", "France", "Germany", "Greece", "Hong Kong", "Hungary", "Iceland",
+    "India", "Indonesia", "Ireland", "Israel", "Italy", "Japan", "Kazakhstan",
+    "Kenya", "Kuwait", "Luxembourg", "Malaysia", "Mexico", "Morocco", "Netherlands",
+    "New Zealand", "Nigeria", "Norway", "Pakistan", "Peru", "Philippines", "Poland",
+    "Portugal", "Qatar", "Romania", "Russia", "Saudi Arabia", "Singapore", "South Africa",
+    "South Korea", "Spain", "Sri Lanka", "Sweden", "Switzerland", "Taiwan", "Thailand",
+    "Turkey", "Ukraine", "United Arab Emirates", "United Kingdom", "United States",
+    "Vietnam",
+  ];
+
+  const EXCHANGE_CATALOG = [
+    ["NYQ", "NYSE"],
+    ["NYE", "NYSE (NYE)"],
+    ["NMS", "NASDAQ"],
+    ["NGM", "NASDAQ Global Market"],
+    ["NCM", "NASDAQ Capital Market"],
+    ["NAS", "NASDAQ (NAS)"],
+    ["ASE", "NYSE American"],
+    ["PCX", "NYSE Arca"],
+    ["BTS", "Cboe BZX"],
+    ["NSI", "NSE"],
+    ["BSE", "BSE"],
+    ["LSE", "London Stock Exchange"],
+    ["IOB", "London IOB"],
+    ["FRA", "Frankfurt"],
+    ["GER", "XETRA / Germany"],
+    ["DUS", "Dusseldorf"],
+    ["MUN", "Munich"],
+    ["STU", "Stuttgart"],
+    ["BER", "Berlin"],
+    ["HAM", "Hamburg"],
+    ["PAR", "Euronext Paris"],
+    ["AMS", "Euronext Amsterdam"],
+    ["BRU", "Euronext Brussels"],
+    ["LIS", "Euronext Lisbon"],
+    ["MIL", "Borsa Italiana"],
+    ["MCE", "Madrid"],
+    ["STO", "Stockholm"],
+    ["HEL", "Helsinki"],
+    ["CPH", "Copenhagen"],
+    ["OSL", "Oslo"],
+    ["ICE", "Iceland"],
+    ["SWX", "SIX Swiss"],
+    ["VIE", "Vienna"],
+    ["WSE", "Warsaw"],
+    ["PRA", "Prague"],
+    ["ATH", "Athens"],
+    ["IST", "Istanbul"],
+    ["TSE", "Tokyo"],
+    ["TYO", "Tokyo (TYO)"],
+    ["OSE", "Osaka"],
+    ["HKG", "Hong Kong"],
+    ["SHH", "Shanghai"],
+    ["SHZ", "Shenzhen"],
+    ["TPE", "Taiwan"],
+    ["KSC", "Korea Exchange"],
+    ["KO", "KRX"],
+    ["KQ", "KOSDAQ"],
+    ["SES", "Singapore"],
+    ["JKT", "Indonesia / Jakarta"],
+    ["JKSE", "Jakarta Composite"],
+    ["BKK", "Thailand"],
+    ["KLS", "Malaysia"],
+    ["ASX", "Australia"],
+    ["NZE", "New Zealand"],
+    ["TOR", "Toronto"],
+    ["CVE", "TSX Venture"],
+    ["CNQ", "CSE"],
+    ["NEO", "Cboe Canada"],
+    ["SAO", "Brazil (B3)"],
+    ["BUE", "Buenos Aires"],
+    ["MEX", "Mexico"],
+    ["SGO", "Santiago"],
+    ["JSE", "Johannesburg"],
+    ["CAI", "Cairo"],
+    ["TAE", "Tel Aviv"],
+    ["SAU", "Saudi Exchange"],
+    ["DSM", "Qatar"],
+    ["KUW", "Kuwait"],
+    ["DFM", "Dubai"],
+    ["ADS", "Abu Dhabi"],
+  ];
+
+  const EXCHANGE_ALIASES = {
+    NSE: ["NSE", "NSI"],
+    NSI: ["NSE", "NSI"],
+    NASDAQ: ["NASDAQ", "NMS", "NGM", "NCM", "NAS"],
+    NMS: ["NMS", "NGM", "NCM", "NAS", "NASDAQ"],
+    NGM: ["NMS", "NGM", "NCM", "NAS", "NASDAQ"],
+    NCM: ["NMS", "NGM", "NCM", "NAS", "NASDAQ"],
+    NAS: ["NMS", "NGM", "NCM", "NAS", "NASDAQ"],
+    NYSE: ["NYSE", "NYQ", "NYE"],
+    NYQ: ["NYSE", "NYQ", "NYE"],
+    NYE: ["NYSE", "NYQ", "NYE"],
+    GER: ["GER", "FRA", "XETRA"],
+    FRA: ["FRA", "GER", "XETRA"],
+    TSE: ["TSE", "TYO"],
+    TYO: ["TSE", "TYO"],
+    KSC: ["KSC", "KO", "KRX"],
+    KO: ["KSC", "KO", "KRX"],
+    JKT: ["JKT", "JKSE", "IDX"],
+  };
+
+  const SECTOR_CATALOG = [
+    "Basic Materials",
+    "Communication Services",
+    "Consumer Cyclical",
+    "Consumer Defensive",
+    "Energy",
+    "Financial Services",
+    "Healthcare",
+    "Industrials",
+    "Real Estate",
+    "Technology",
+    "Utilities",
+  ];
+
+  const INDUSTRY_CATALOG = [
+    "Advertising Agencies", "Aerospace & Defense", "Agricultural Inputs", "Airlines",
+    "Airports & Air Services", "Aluminum", "Apparel Manufacturing", "Apparel Retail",
+    "Asset Management", "Auto & Truck Dealerships", "Auto Manufacturers", "Auto Parts",
+    "Banks - Diversified", "Banks - Regional", "Beverages - Brewers", "Beverages - Non-Alcoholic",
+    "Beverages - Wineries & Distilleries", "Biotechnology", "Broadcasting", "Building Materials",
+    "Building Products & Equipment", "Business Equipment & Supplies", "Capital Markets",
+    "Chemicals", "Coking Coal", "Communication Equipment", "Computer Hardware", "Confectioners",
+    "Conglomerates", "Consulting Services", "Consumer Electronics", "Copper", "Credit Services",
+    "Department Stores", "Diagnostics & Research", "Discount Stores", "Drug Manufacturers - General",
+    "Drug Manufacturers - Specialty & Generic", "Education & Training Services",
+    "Electrical Equipment & Parts", "Electronic Components", "Electronic Gaming & Multimedia",
+    "Electronics & Computer Distribution", "Engineering & Construction", "Entertainment",
+    "Farm & Heavy Construction Machinery", "Farm Products", "Financial Conglomerates",
+    "Financial Data & Stock Exchanges", "Food Distribution", "Footwear & Accessories",
+    "Furnishings, Fixtures & Appliances", "Gambling", "Gold", "Grocery Stores",
+    "Health Information Services", "Healthcare Plans", "Home Improvement Retail",
+    "Household & Personal Products", "Industrial Distribution", "Information Technology Services",
+    "Infrastructure Operations", "Insurance - Brokers", "Insurance - Diversified",
+    "Insurance - Life", "Insurance - Property & Casualty", "Insurance - Reinsurance",
+    "Insurance - Specialty", "Integrated Freight & Logistics", "Internet Content & Information",
+    "Internet Retail", "Leisure", "Lodging", "Lumber & Wood Production", "Luxury Goods",
+    "Marine Shipping", "Medical Care Facilities", "Medical Devices", "Medical Distribution",
+    "Medical Instruments & Supplies", "Metal Fabrication", "Mortgage Finance",
+    "Oil & Gas Drilling", "Oil & Gas E&P", "Oil & Gas Equipment & Services",
+    "Oil & Gas Integrated", "Oil & Gas Midstream", "Oil & Gas Refining & Marketing",
+    "Other Industrial Metals & Mining", "Other Precious Metals & Mining", "Packaged Foods",
+    "Packaging & Containers", "Paper & Paper Products", "Personal Services",
+    "Pharmaceutical Retailers", "Pollution & Treatment Controls", "Publishing", "Railroads",
+    "Real Estate - Development", "Real Estate - Diversified", "Real Estate Services",
+    "Recreational Vehicles", "REIT - Diversified", "REIT - Healthcare Facilities",
+    "REIT - Hotel & Motel", "REIT - Industrial", "REIT - Mortgage", "REIT - Office",
+    "REIT - Residential", "REIT - Retail", "REIT - Specialty", "Rental & Leasing Services",
+    "Residential Construction", "Resorts & Casinos", "Restaurants",
+    "Scientific & Technical Instruments", "Security & Protection Services",
+    "Semiconductor Equipment & Materials", "Semiconductors", "Shell Companies", "Silver",
+    "Software - Application", "Software - Infrastructure", "Solar", "Specialty Business Services",
+    "Specialty Chemicals", "Specialty Industrial Machinery", "Specialty Retail",
+    "Staffing & Employment Services", "Steel", "Telecom Services", "Textile Manufacturing",
+    "Thermal Coal", "Tobacco", "Tools & Accessories", "Travel Services", "Trucking",
+    "Uranium", "Utilities - Diversified", "Utilities - Independent Power Producers",
+    "Utilities - Regulated Electric", "Utilities - Regulated Gas", "Utilities - Regulated Water",
+    "Utilities - Renewable", "Waste Management",
+  ];
+
   const SCREENER = [
     {
       id: "company",
@@ -1000,10 +1372,10 @@
       open: true,
       hint: "Narrow the company universe. Selected values are combined with OR.",
       controls: [
-        { type: "multi", id: "country", field: "country", label: "Country" },
-        { type: "multi", id: "market", field: "exchange", label: "Exchange / Market" },
-        { type: "multi", id: "sector", field: "sector", label: "Sector" },
-        { type: "multi", id: "industry", field: "industry", label: "Industry" },
+        { type: "multi", id: "country", field: "country", label: "Country", catalog: COUNTRY_CATALOG },
+        { type: "multi", id: "market", field: "exchange", label: "Exchange / Market", catalog: EXCHANGE_CATALOG },
+        { type: "multi", id: "sector", field: "sector", label: "Sector", catalog: SECTOR_CATALOG },
+        { type: "multi", id: "industry", field: "industry", label: "Industry", catalog: INDUSTRY_CATALOG },
         {
           type: "num", id: "cap", field: "market_cap", label: "Market capitalization", kind: "cap",
           minPh: "Min $B", maxPh: "Max $B",
@@ -1236,10 +1608,14 @@
     host.innerHTML = SCREENER.map((group) => {
       const controls = group.controls.map((spec) => {
         if (spec.type === "multi") {
-          return `<div class="ms" data-ms="${spec.id}" data-field="${spec.field}">
+          return `<div class="ms is-drop" data-ms="${spec.id}" data-field="${spec.field}">
             <span class="nf-label">${esc(spec.label)}</span>
             <p class="ms-hint">Match any selected</p>
-            <div class="ms-list" id="ms-${spec.id}"></div>
+            <button type="button" class="ms-toggle" id="ms-toggle-${spec.id}">Any</button>
+            <div class="ms-panel" id="ms-panel-${spec.id}" hidden>
+              <input class="ms-search" type="search" placeholder="Search ${esc(spec.label).toLowerCase()}" autocomplete="off" />
+              <div class="ms-list" id="ms-${spec.id}"></div>
+            </div>
           </div>`;
         }
         if (spec.type === "choice") {
@@ -1266,9 +1642,10 @@
     }).join("");
     SCREENER.forEach((group) => {
       group.controls.forEach((spec) => {
-        if (spec.type === "multi" && spec.static) fillMulti($(`ms-${spec.id}`), spec.static);
+        if (spec.type === "multi") fillMulti($(`ms-${spec.id}`), spec.catalog || spec.static || []);
       });
     });
+    bindMultiDropdowns();
     host.dataset.ready = "1";
   }
 
@@ -1447,6 +1824,72 @@
     return [...document.querySelectorAll(`#ms-${id} input:checked`)].map((node) => node.value);
   }
 
+  function normText(value) {
+    return String(value || "").toLowerCase().replace(/[—–−]/g, "-").replace(/\s+/g, " ").trim();
+  }
+
+  function syncMultiToggle(host) {
+    const root = host?.closest?.(".ms") || host;
+    const list = root?.querySelector?.(".ms-list") || host;
+    const toggle = root?.querySelector?.(".ms-toggle");
+    if (!toggle || !list) return;
+    const picked = [...list.querySelectorAll("input:checked")].map((node) => {
+      const label = node.closest("label");
+      return (label?.textContent || node.value).trim();
+    });
+    toggle.textContent = picked.length
+      ? `${picked.slice(0, 2).join(", ")}${picked.length > 2 ? ` +${picked.length - 2}` : ""}`
+      : "Any";
+    toggle.classList.toggle("has-value", picked.length > 0);
+  }
+
+  function multiMatch(picked, row, field) {
+    if (!picked.length) return true;
+    const raw = row[field] || "";
+    const norm = normText(raw);
+    const ticker = (row.ticker || "").toUpperCase();
+    return picked.some((choice) => {
+      if (field === "exchange") {
+        const aliases = EXCHANGE_ALIASES[choice] || [choice];
+        if (aliases.some((item) => item.toUpperCase() === String(raw).toUpperCase())) return true;
+        if ((choice === "NSE" || choice === "NSI") && (ticker.endsWith(".NS") || ticker.endsWith(".NSE"))) return true;
+        if (choice === "BSE" && (ticker.endsWith(".BO") || ticker.endsWith(".BSE"))) return true;
+      }
+      return normText(choice) === norm;
+    });
+  }
+
+  function bindMultiDropdowns() {
+    document.querySelectorAll(".ms.is-drop").forEach((root) => {
+      if (root.dataset.bound) return;
+      root.dataset.bound = "1";
+      const toggle = root.querySelector(".ms-toggle");
+      const panel = root.querySelector(".ms-panel");
+      const search = root.querySelector(".ms-search");
+      const list = root.querySelector(".ms-list");
+      toggle?.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const open = panel.hidden;
+        document.querySelectorAll(".ms-panel").forEach((node) => { node.hidden = true; });
+        panel.hidden = !open;
+        if (open) search?.focus();
+      });
+      search?.addEventListener("input", () => {
+        const query = (search.value || "").trim().toLowerCase();
+        list?.querySelectorAll(".ms-item").forEach((item) => {
+          item.hidden = Boolean(query) && !item.textContent.toLowerCase().includes(query);
+        });
+      });
+    });
+    if (document.body.dataset.msClose) return;
+    document.body.dataset.msClose = "1";
+    document.addEventListener("click", (event) => {
+      if (event.target.closest(".ms.is-drop")) return;
+      document.querySelectorAll(".ms-panel").forEach((node) => { node.hidden = true; });
+    });
+  }
+
   function nfRoot(id) {
     return document.querySelector(`[data-nf="${id}"]`);
   }
@@ -1476,10 +1919,20 @@
   function fillMulti(host, values) {
     if (!host) return;
     const checked = new Set([...host.querySelectorAll("input:checked")].map((node) => node.value));
-    const unique = [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b));
-    host.innerHTML = unique.length
-      ? unique.map((value) => `<label class="ms-item"><input type="checkbox" value="${esc(value)}"${checked.has(value) ? " checked" : ""} /> ${esc(value)}</label>`).join("")
-      : `<p class="ms-hint" style="padding:8px 10px">No values in this result set.</p>`;
+    const items = [];
+    const seen = new Set();
+    (values || []).forEach((raw) => {
+      const value = Array.isArray(raw) ? raw[0] : raw;
+      const label = Array.isArray(raw) ? raw[1] : raw;
+      if (!value || seen.has(value)) return;
+      seen.add(value);
+      items.push({ value, label });
+    });
+    items.sort((a, b) => String(a.label).localeCompare(String(b.label)));
+    host.innerHTML = items.length
+      ? items.map((item) => `<label class="ms-item"><input type="checkbox" value="${esc(item.value)}"${checked.has(item.value) ? " checked" : ""} /> ${esc(item.label)}</label>`).join("")
+      : `<p class="ms-hint" style="padding:8px 10px">No options.</p>`;
+    syncMultiToggle(host);
   }
 
   function choicePass(id, row) {
@@ -1501,7 +1954,7 @@
         for (const spec of group.controls) {
           if (spec.type === "multi") {
             const picked = selectedMulti(spec.id);
-            if (picked.length && !picked.includes(row[spec.field] || "")) return false;
+            if (picked.length && !multiMatch(picked, row, spec.field)) return false;
           } else if (spec.type === "choice") {
             if (!choicePass(spec.id, row)) return false;
           } else {
@@ -1608,6 +2061,7 @@
       multi.querySelectorAll("input").forEach((node) => {
         if (!value || node.value === value) node.checked = false;
       });
+      syncMultiToggle(multi);
       return;
     }
     const root = nfRoot(id);
@@ -1626,6 +2080,20 @@
     const extra = $("custom-filter-rows");
     if (extra) extra.innerHTML = "";
     document.querySelectorAll("#discover-presets [data-preset]").forEach((btn) => btn.classList.remove("is-active"));
+  }
+
+  function resetDiscover() {
+    if ($("discover-q")) $("discover-q").value = "";
+    if ($("discover-sort")) $("discover-sort").value = "";
+    if ($("discover-dir")) $("discover-dir").value = "desc";
+    clearAllFilters();
+    document.querySelectorAll(".ms-list").forEach((list) => syncMultiToggle(list));
+    const note = $("similar-note");
+    if (note) {
+      note.hidden = true;
+      note.textContent = "";
+    }
+    loadDiscover();
   }
 
   function setNf(id, preset, min, max) {
@@ -1678,10 +2146,10 @@
   function paintDiscoverRows(rows) {
     lastDiscover = rows;
     const merged = rows.map(mergeResearch).map(withSpark);
-    fillMulti($("ms-country"), merged.map((row) => row.country));
-    fillMulti($("ms-market"), merged.map((row) => row.exchange));
-    fillMulti($("ms-sector"), merged.map((row) => row.sector));
-    fillMulti($("ms-industry"), merged.map((row) => row.industry));
+    fillMulti($("ms-country"), COUNTRY_CATALOG.concat(merged.map((row) => row.country)));
+    fillMulti($("ms-market"), EXCHANGE_CATALOG.concat(merged.map((row) => row.exchange).filter(Boolean).map((value) => [value, value])));
+    fillMulti($("ms-sector"), SECTOR_CATALOG.concat(merged.map((row) => row.sector)));
+    fillMulti($("ms-industry"), INDUSTRY_CATALOG.concat(merged.map((row) => row.industry)));
     syncCustomVisibility();
     const filtered = sortDiscover(filterDiscover(merged));
     renderChips(filtered.length);
@@ -1699,18 +2167,18 @@
       const star = document.createElement("td");
       star.appendChild(starButton(row));
       const company = document.createElement("td");
+      company.className = "discover-company";
       company.innerHTML = `<strong>${row.name}</strong><div class="muted">${row.ticker}</div>`;
       const actions = document.createElement("td");
       const wrap = document.createElement("div");
       wrap.className = "row-actions";
-      wrap.appendChild(actionButton("View", "ghost", () => openCompany(row, false)));
-      wrap.appendChild(actionButton("Run Analytics", "", () => openCompany(row, true)));
+      wrap.appendChild(actionButton("Analytics", "", () => openCompany(row, true)));
       actions.appendChild(wrap);
       tr.appendChild(star);
       tr.appendChild(company);
       tr.insertAdjacentHTML(
         "beforeend",
-        `<td>${row.exchange || "—"}</td><td>${row.sector || "—"}</td><td>${row.industry || "—"}</td><td>${cap(row.market_cap)}</td><td>${pct(row.revenue_growth)}</td><td>${pct(row.earnings_growth)}</td><td>${pct(row.roe)}</td><td>${num(row.pe)}</td><td>${scoreText(row.score)}</td>`
+        `<td class="col-text">${row.exchange || "—"}</td><td class="col-text">${row.sector || "—"}</td><td class="col-text">${row.industry || "—"}</td><td class="col-num">${cap(row.market_cap)}</td><td class="col-num">${pct(row.revenue_growth)}</td><td class="col-num">${pct(row.earnings_growth)}</td><td class="col-num">${pct(row.roe)}</td><td class="col-num">${num(row.pe)}</td><td class="col-num">${scoreText(row.score)}</td>`
       );
       tr.appendChild(actions);
       body.appendChild(tr);
@@ -1929,22 +2397,85 @@
   $("add-filter")?.addEventListener("click", addCustomFilter);
   $("open-method")?.addEventListener("click", () => go("method"));
   $("report-compare")?.addEventListener("click", compareReports);
+  $("report-remove-btn")?.addEventListener("click", () => {
+    const box = $("compare-box");
+    if (reportMode !== "remove") {
+      setReportMode("remove");
+      return;
+    }
+    const picked = selectedReportRows();
+    if (!picked.length) {
+      if (box) {
+        box.hidden = false;
+        box.innerHTML = `<p class="empty-note">Tick the reports to remove, then confirm.</p>`;
+      }
+      return;
+    }
+    if (!window.writeDesk) return;
+    const keys = new Set(picked.map(reportKey));
+    const tickers = new Set(picked.map((row) => row.ticker));
+    const state = desk();
+    window.writeDesk({
+      ...state,
+      reports: (state.reports || []).filter((row) => !keys.has(reportKey(row)) && !tickers.has(row.ticker)),
+    });
+    pickedReportKeys.clear();
+    if (box) {
+      box.hidden = true;
+      box.innerHTML = "";
+    }
+    setReportMode("");
+  });
+  $("report-manage-cancel")?.addEventListener("click", () => {
+    pickedReportKeys.clear();
+    const box = $("compare-box");
+    if (box) {
+      box.hidden = true;
+      box.innerHTML = "";
+    }
+    setReportMode("");
+  });
   $("watch-compare-btn")?.addEventListener("click", compareWatch);
-  $("watch-manage")?.addEventListener("click", () => setWatchManaging(true));
   $("watch-manage-cancel")?.addEventListener("click", () => {
+    pickedWatch.clear();
     const box = $("watch-compare");
-    if (box) box.hidden = true;
-    setWatchManaging(false);
+    if (box) {
+      box.hidden = true;
+      box.innerHTML = "";
+    }
+    setWatchMode("");
   });
   $("watch-remove-btn")?.addEventListener("click", () => {
-    const tickers = [...document.querySelectorAll(".watch-check:checked")].map((node) => node.value);
-    if (!tickers.length || !window.writeDesk) return;
+    const box = $("watch-compare");
+    if (watchMode !== "remove") {
+      setWatchMode("remove");
+      return;
+    }
+    document.querySelectorAll(".watch-check").forEach((node) => {
+      if (node.checked) pickedWatch.add(node.value);
+      else pickedWatch.delete(node.value);
+    });
+    const tickers = [...pickedWatch];
+    if (!tickers.length) {
+      if (box) {
+        box.hidden = false;
+        box.innerHTML = `<p class="empty-note">Tick the companies to remove, then confirm.</p>`;
+      }
+      return;
+    }
+    if (!window.writeDesk) return;
     const state = desk();
     window.writeDesk({
       ...state,
       watch: (state.watch || []).filter((item) => !tickers.includes(item.ticker)),
     });
-    setWatchManaging(false);
+    pickedWatch.clear();
+    if (box) {
+      box.hidden = true;
+      box.innerHTML = "";
+    }
+    watchHydrateKey = "";
+    setWatchMode("");
     if (window.paintResultStar) window.paintResultStar();
   });
 
@@ -1952,7 +2483,7 @@
     event.preventDefault();
     loadDiscover();
   });
-  $("discover-similar")?.addEventListener("click", loadSimilar);
+  $("discover-reset")?.addEventListener("click", resetDiscover);
   $("discover-presets")?.addEventListener("click", (event) => {
     const button = event.target.closest("[data-preset]");
     if (button) applyPreset(button.getAttribute("data-preset"));

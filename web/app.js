@@ -293,7 +293,12 @@ function scoreTone(score) {
 }
 
 function setPillar(cardId, scoreId, ratingId, tipId, score, rating, why) {
-  $(scoreId).textContent = scorePct(score);
+  const node = $(scoreId);
+  if (score == null || Number.isNaN(Number(score))) {
+    node.textContent = "—";
+  } else {
+    node.innerHTML = `${Number(score).toFixed(0)}<span class="pct">%</span>`;
+  }
   $(ratingId).textContent = rating;
   $(tipId).textContent = why || "No explanation for this score yet.";
   const card = $(cardId);
@@ -560,8 +565,11 @@ function renderSources(filing) {
   const node = $("sources");
   node.innerHTML = "";
   for (const item of filing.sources || []) {
+    const label = (item.label || "").toLowerCase();
+    const url = item.url || "";
+    if (label.includes("tradingview") || url.includes("tradingview.com")) continue;
     const a = document.createElement("a");
-    a.href = item.url;
+    a.href = url;
     a.target = "_blank";
     a.rel = "noopener";
     a.textContent = item.label;
@@ -866,7 +874,17 @@ function rememberRun(data) {
     at: Date.now(),
     status: "Historical report",
   };
-  const reports = [row, ...(state.reports || [])].slice(0, 40);
+  const stamp = (item) => [
+    item.ticker,
+    item.horizonDays ?? item.horizon,
+    item.score == null ? "" : Math.round(Number(item.score)),
+    item.fundScore == null ? "" : Math.round(Number(item.fundScore)),
+    item.techScore == null ? "" : Math.round(Number(item.techScore)),
+    item.newsScore == null ? "" : Math.round(Number(item.newsScore)),
+    item.label || "",
+  ].join("|");
+  const isRepeat = previous && stamp(previous) === stamp(row);
+  const reports = [row, ...(state.reports || []).filter((item) => item.ticker !== ticker)].slice(0, 40);
   const exists = (state.watch || []).some((item) => item.ticker === ticker);
   const watch = exists
     ? (state.watch || []).map((item) => (
@@ -894,14 +912,16 @@ function rememberRun(data) {
       at: row.at,
     });
   }
-  events.unshift({
-    type: "report",
-    ticker,
-    name: row.name,
-    text: `New report generated for ${row.name}: ${row.label || "unscored"} · ${row.score != null ? `${Math.round(row.score)}%` : "—"}`,
-    at: row.at,
-  });
-  if (previous && previous.score != null && row.score != null && Math.abs(row.score - previous.score) >= 2) {
+  if (!isRepeat) {
+    events.unshift({
+      type: "report",
+      ticker,
+      name: row.name,
+      text: `New report generated for ${row.name}: ${row.label || "unscored"} · ${row.score != null ? `${Math.round(row.score)}%` : "—"}`,
+      at: row.at,
+    });
+  }
+  if (!isRepeat && previous && previous.score != null && row.score != null && Math.abs(row.score - previous.score) >= 2) {
     const delta = row.score - previous.score;
     events.unshift({
       type: delta > 0 ? "score-up" : "score-down",
