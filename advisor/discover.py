@@ -10,6 +10,7 @@ import yfinance as yf
 from advisor.config import CACHE_DIR, EDGAR_CACHE_TTL, MARKET_CACHE_TTL
 from advisor.catalog import load_custom
 from advisor.filings import FEATURED_TICKERS, all_filers, list_filers, search_filers
+from advisor.fx import annotate_rows, infer_currency
 from advisor.resolve import search_listed
 from advisor.scoring import safe_float
 
@@ -272,6 +273,7 @@ def snapshot(ticker: str, *, force: bool = False) -> dict[str, Any] | None:
             "held_insiders": _num(info.get("heldPercentInsiders")),
             "held_institutions": _num(info.get("heldPercentInstitutions")),
             "listed": "." in symbol or not info.get("cik"),
+            "currency": infer_currency(symbol, info.get("currency") or info.get("financialCurrency")),
         }
         row.update(_earnings_event(info, handle))
         if not row["name"]:
@@ -591,9 +593,10 @@ def _overlay_hydrated(rows: list[dict[str, Any]], tickers: list[str]) -> list[di
 
 
 def _discover_payload(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    converted = annotate_rows(rows)
     return {
-        "results": rows,
-        "count": len(rows),
+        "results": converted,
+        "count": len(converted),
         "note": (
             "Figures are published Yahoo Finance fields only. "
             "Dilagent scores appear after an Analytics run."

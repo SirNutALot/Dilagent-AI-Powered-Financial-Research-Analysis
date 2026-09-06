@@ -1,6 +1,149 @@
 (function () {
   const $ = (id) => document.getElementById(id);
 
+  const TERM_ALIASES = {
+    "Rev. growth": "Revenue growth",
+    "Earn. growth": "Earnings growth",
+    Dilagent: "Dilagent score",
+    Score: "Dilagent score",
+    Overall: "Dilagent score",
+    "Technical score": "Technicals score",
+    "News score": "News / external score",
+    "Free cash flow": "FCF",
+    "Operating cash flow": "OCF",
+  };
+
+  const SORT_TERMS = {
+    name: "Company",
+    ticker: "Ticker",
+    price: "Price",
+    day_change_pct: "Daily change",
+    market_cap: "Market cap",
+    revenue_growth: "Revenue growth",
+    earnings_growth: "Earnings growth",
+    roe: "ROE",
+    pe: "P/E",
+    score: "Dilagent score",
+    label: "Verdict",
+    week_return: "Trend",
+    at: "Date",
+    horizon: "Horizon",
+    status: "Status",
+    exchange: "Market",
+    sector: "Sector",
+    industry: "Industry",
+  };
+
+  function glossaryText(key) {
+    const raw = String(key || "").trim();
+    if (!raw) return "";
+    const mapped = TERM_ALIASES[raw] || raw;
+    const book = window.GLOSSARY || {};
+    return book[mapped] || book[raw] || "";
+  }
+
+  function termHtml(label, term, klass) {
+    const text = String(label || "");
+    const hint = glossaryText(term || text);
+    const extra = klass ? ` ${klass}` : "";
+    if (!hint) return klass ? `<span class="${esc(klass)}">${esc(text)}</span>` : esc(text);
+    return `<span class="term${extra}" tabindex="0" data-term="${esc(term || text)}">${esc(text)}</span>`;
+  }
+
+  function decorateSortHeaders() {
+    document.querySelectorAll(".th-sort").forEach((btn) => {
+      if (btn.dataset.termed) return;
+      const term = SORT_TERMS[btn.dataset.sort];
+      if (!term || !glossaryText(term)) return;
+      const textNode = [...btn.childNodes].find((node) => node.nodeType === 3 && node.textContent.trim());
+      if (!textNode) return;
+      const span = document.createElement("span");
+      span.className = "term";
+      span.tabIndex = 0;
+      span.dataset.term = term;
+      span.textContent = textNode.textContent.trim();
+      btn.replaceChild(span, textNode);
+      btn.dataset.termed = "1";
+    });
+  }
+
+  function bindDeskTips() {
+    if (document.body.dataset.deskTips) return;
+    document.body.dataset.deskTips = "1";
+    const tip = document.createElement("div");
+    tip.id = "desk-term-tip";
+    tip.className = "desk-term-tip";
+    tip.hidden = true;
+    document.body.appendChild(tip);
+
+    let hideTimer = 0;
+
+    function hideNow() {
+      clearTimeout(hideTimer);
+      tip.hidden = true;
+    }
+
+    function hide() {
+      clearTimeout(hideTimer);
+      hideTimer = setTimeout(hideNow, 120);
+    }
+
+    function termKey(el) {
+      if (el.dataset.term) return el.dataset.term;
+      if (el.matches?.("select.cf-field")) return el.selectedOptions[0]?.textContent.trim() || "";
+      return (el.textContent || "").trim();
+    }
+
+    function resolve(node) {
+      const el = node?.closest?.("[data-term], .term");
+      if (!el) return null;
+      if (el.querySelector(":scope > .term-tip")) return null;
+      return el;
+    }
+
+    function show(el) {
+      const text = glossaryText(termKey(el));
+      if (!text) {
+        hide();
+        return;
+      }
+      clearTimeout(hideTimer);
+      tip.textContent = text;
+      tip.hidden = false;
+      const box = el.getBoundingClientRect();
+      const pad = 8;
+      const width = tip.offsetWidth;
+      const height = tip.offsetHeight;
+      let left = box.left + box.width / 2 - width / 2;
+      left = Math.max(pad, Math.min(left, window.innerWidth - width - pad));
+      let top = box.top - height - 8;
+      if (top < pad) top = box.bottom + 8;
+      if (top + height > window.innerHeight - pad) {
+        top = Math.max(pad, window.innerHeight - height - pad);
+      }
+      tip.style.left = `${left}px`;
+      tip.style.top = `${top}px`;
+    }
+
+    document.addEventListener("mouseover", (event) => {
+      const el = resolve(event.target);
+      if (el) show(el);
+    });
+    document.addEventListener("focusin", (event) => {
+      const el = resolve(event.target);
+      if (el) show(el);
+    });
+    document.addEventListener("mouseout", (event) => {
+      const el = resolve(event.target);
+      if (!el) return;
+      const next = event.relatedTarget;
+      if (next && el.contains(next)) return;
+      hide();
+    });
+    document.addEventListener("focusout", hide);
+    window.addEventListener("scroll", hideNow, true);
+  }
+
   function desk() {
     return window.readDesk ? window.readDesk() : { watch: [], reports: [], events: [] };
   }
@@ -169,6 +312,132 @@
     return Number(value).toLocaleString(undefined, { maximumFractionDigits: 2 });
   }
 
+  const TABLE_FX_KEY = "dilagent-table-currency";
+  const SUFFIX_CCY = {
+    NS: "INR", NSE: "INR", BO: "INR", BSE: "INR",
+    SA: "BRL", L: "GBP", T: "JPY", TYO: "JPY",
+    HK: "HKD", SS: "CNY", SZ: "CNY",
+    KS: "KRW", KQ: "KRW", TW: "TWD", TWO: "TWD",
+    SI: "SGD", AX: "AUD", TO: "CAD", V: "CAD",
+    SW: "CHF", PA: "EUR", AS: "EUR", BR: "EUR", DE: "EUR", F: "EUR",
+    MI: "EUR", MC: "EUR", LS: "EUR", HE: "EUR",
+    ST: "SEK", CO: "DKK", OL: "NOK", JO: "ZAR", MX: "MXN", TA: "ILS",
+  };
+  let tableCurrency = "USD";
+  let fxCatalog = [];
+  let fxRates = { USD: 1 };
+
+  function readTableCurrency() {
+    try {
+      const saved = localStorage.getItem(TABLE_FX_KEY);
+      if (saved) tableCurrency = String(saved).toUpperCase();
+    } catch {
+      /* keep USD */
+    }
+  }
+
+  function writeTableCurrency(code) {
+    tableCurrency = String(code || "USD").toUpperCase();
+    try {
+      localStorage.setItem(TABLE_FX_KEY, tableCurrency);
+    } catch {
+      /* ignore quota */
+    }
+  }
+
+  function inferListingCcy(row) {
+    const raw = String(row?.currency || "").trim().toUpperCase();
+    if (raw) return raw;
+    const ticker = String(row?.ticker || "").toUpperCase();
+    if (!ticker.includes(".")) return "USD";
+    return SUFFIX_CCY[ticker.split(".").pop()] || "USD";
+  }
+
+  function convertTableMoney(value, from) {
+    if (value == null || Number.isNaN(Number(value))) return null;
+    const src = String(from || "USD").toUpperCase();
+    const dst = tableCurrency;
+    if (src === dst) return Number(value);
+    const srcRate = fxRates[src];
+    const dstRate = fxRates[dst];
+    if (!srcRate || !dstRate) return null;
+    return Number(value) * srcRate / dstRate;
+  }
+
+  function moneyTable(value, from) {
+    if (value == null || Number.isNaN(Number(value))) return "—";
+    const converted = convertTableMoney(value, from);
+    const code = converted != null ? tableCurrency : (from || "");
+    const amount = converted != null ? converted : value;
+    try {
+      return new Intl.NumberFormat("en-US", {
+        style: "currency",
+        currency: code || "USD",
+        maximumFractionDigits: 2,
+      }).format(amount);
+    } catch {
+      return `${moneyShort(amount)} ${code}`.trim();
+    }
+  }
+
+  function capTable(value, from) {
+    if (value == null || Number.isNaN(Number(value))) return "—";
+    const converted = convertTableMoney(value, from);
+    if (converted != null) return cap(converted);
+    const code = from || "";
+    return code ? `${cap(value)} ${code}` : cap(value);
+  }
+
+  function paintTableCurrencyHeads() {
+    document.querySelectorAll(".th-ccy").forEach((node) => {
+      node.textContent = tableCurrency ? `(${tableCurrency})` : "";
+    });
+  }
+
+  function fillTableCurrencySelects() {
+    const html = (fxCatalog || []).map((item) => (
+      `<option value="${esc(item.code)}">${esc(item.label)} (${esc(item.code)})</option>`
+    )).join("");
+    ["watch-currency", "discover-currency"].forEach((id) => {
+      const select = $(id);
+      if (!select) return;
+      const keep = select.value || tableCurrency;
+      select.innerHTML = html || `<option value="USD">US dollar (USD)</option>`;
+      if ([...select.options].some((opt) => opt.value === keep)) select.value = keep;
+      else if ([...select.options].some((opt) => opt.value === tableCurrency)) select.value = tableCurrency;
+    });
+  }
+
+  async function ensureTableFx(codes) {
+    const needed = [...new Set((codes || []).concat([tableCurrency]).map((code) => String(code || "").toUpperCase()).filter((code) => code && fxRates[code] == null))];
+    if (!needed.length && fxCatalog.length) return;
+    try {
+      const params = needed.length ? `?currencies=${encodeURIComponent(needed.join(","))}` : "";
+      const data = await fetch(`/api/fx${params}`).then((res) => res.json());
+      fxCatalog = data.currencies || fxCatalog;
+      Object.assign(fxRates, data.rates || {});
+      fillTableCurrencySelects();
+      paintTableCurrencyHeads();
+    } catch {
+      /* keep listing amounts */
+    }
+  }
+
+  async function setTableCurrency(code) {
+    writeTableCurrency(code);
+    fillTableCurrencySelects();
+    paintTableCurrencyHeads();
+    await ensureTableFx([tableCurrency]);
+    paintWatch(false);
+    if (lastDiscover.length) paintDiscoverRows(lastDiscover, true);
+    const box = $("watch-compare");
+    if (watchMode === "compare" && box && !box.hidden && box.querySelector("table")) {
+      compareWatch();
+    }
+    const inspect = $("watch-inspect");
+    if (lastInspected && inspect && !inspect.hidden) inspectWatch(lastInspected);
+  }
+
   function sparkSvg(closes) {
     if (!closes || closes.length < 2) return "—";
     const min = Math.min(...closes);
@@ -271,9 +540,14 @@
     const nav = $("dash-mover-nav");
     const heading = $("dash-mover-heading");
     const meta = $("dash-mover-meta");
+    const ccy = $("dash-mover-ccy");
     if (tv) {
       tv.hidden = true;
       tv.innerHTML = "";
+    }
+    if (ccy) {
+      ccy.hidden = true;
+      ccy.textContent = "";
     }
     if (nav) nav.hidden = true;
     if (heading) heading.textContent = "Major moves";
@@ -311,9 +585,14 @@
     if (pos) pos.textContent = total > 1 ? `${index + 1} / ${total}` : "";
     if (!tv) return;
     tv.hidden = false;
+    const ccy = $("dash-mover-ccy");
+    if (ccy) {
+      ccy.hidden = false;
+      ccy.textContent = chartCcyText(row);
+    }
     if (dashMoverTicker === row.ticker) return;
     dashMoverTicker = row.ticker;
-    embedTradingView(tv, row.ticker, row.exchange);
+    embedTradingView(tv, row.ticker, row.exchange, inferListingCcy(row));
   }
 
   function paintDashMoves(watch) {
@@ -520,9 +799,105 @@
     return prefix ? `${prefix}:${core}` : raw;
   }
 
-  function embedTradingView(host, ticker, exchange) {
+  function ccyLabel(code) {
+    const hit = (fxCatalog || []).find((item) => item.code === code);
+    return hit ? `${hit.label} (${code})` : code;
+  }
+
+  function moneyInTable(value) {
+    if (value == null || Number.isNaN(Number(value))) return "—";
+    try {
+      return new Intl.NumberFormat("en-US", {
+        style: "currency",
+        currency: tableCurrency,
+        maximumFractionDigits: 2,
+      }).format(value);
+    } catch {
+      return `${moneyShort(value)} ${tableCurrency}`;
+    }
+  }
+
+  function chartCcyText(row, kind) {
+    const listing = inferListingCcy(row);
+    if (kind === "converted") {
+      return `Chart prices are in ${ccyLabel(tableCurrency)}, converted from ${listing} with Yahoo FX.`;
+    }
+    if (kind === "mixed") {
+      return `TradingView stays in ${ccyLabel(listing)}. Table prices are in ${ccyLabel(tableCurrency)}.`;
+    }
+    return `Chart prices are in ${ccyLabel(listing)}.`;
+  }
+
+  function setChartNote(host, row, kind) {
+    if (!host) return;
+    let note = host.previousElementSibling;
+    if (!note || !note.classList.contains("tv-ccy")) {
+      note = document.createElement("p");
+      note.className = "muted tv-ccy";
+      host.insertAdjacentElement("beforebegin", note);
+    }
+    note.hidden = false;
+    note.textContent = chartCcyText(row, kind);
+  }
+
+  function tvUrl(ticker, exchange) {
+    return `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(tvSymbol(ticker, exchange))}`;
+  }
+
+  function priceChartHtml(values) {
+    const w = 400;
+    const h = 200;
+    const padX = 8;
+    const padY = 16;
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const span = Math.max(max - min, 1e-9);
+    const points = values.map((value, index) => {
+      const x = padX + (index / (values.length - 1)) * (w - padX * 2);
+      const y = padY + (1 - (value - min) / span) * (h - padY * 2);
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    }).join(" ");
+    const last = values[values.length - 1];
+    const color = last >= values[0] ? "#0d6b4c" : "#b42318";
+    return `<div class="fx-chart">
+      <p class="fx-chart-last">${moneyInTable(last)}</p>
+      <svg class="fx-chart-svg" viewBox="0 0 ${w} ${h}" role="img" aria-label="Price in ${tableCurrency}">
+        <polyline fill="none" stroke="${color}" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round" points="${points}" />
+      </svg>
+    </div>`;
+  }
+
+  async function ensureWatchSparks(tickers) {
+    const need = [...new Set((tickers || []).filter((ticker) => ticker && !((watchSparks[ticker] || {}).closes || []).length))];
+    if (!need.length) return;
+    try {
+      const data = await fetch(`/api/spark?tickers=${encodeURIComponent(need.join(","))}`).then((res) => res.json());
+      watchSparks = { ...watchSparks, ...(data.results || {}) };
+    } catch {
+      /* keep what we have */
+    }
+  }
+
+  function paintDeskChart(host, row) {
+    if (!host) return;
+    const listing = inferListingCcy(row);
+    const closes = (watchSparks[row.ticker] || {}).closes || [];
+    const converted = closes.map((value) => convertTableMoney(value, listing)).filter((value) => value != null);
+    const needsFx = listing !== tableCurrency;
+    if (needsFx && converted.length >= 2) {
+      host.classList.add("is-fx");
+      setChartNote(host, row, "converted");
+      host.innerHTML = `${priceChartHtml(converted)}<a class="tv-link" href="${tvUrl(row.ticker, row.exchange)}" target="_blank" rel="noopener">Open listing chart on TradingView</a>`;
+      return;
+    }
+    host.classList.remove("is-fx");
+    embedTradingView(host, row.ticker, row.exchange, listing, needsFx ? "mixed" : "");
+  }
+
+  function embedTradingView(host, ticker, exchange, currency, noteKind) {
     if (!host) return;
     host.innerHTML = "";
+    setChartNote(host, { ticker, exchange, currency }, noteKind);
     const container = document.createElement("div");
     container.className = "tradingview-widget-container";
     const widget = document.createElement("div");
@@ -551,26 +926,31 @@
     host.appendChild(container);
   }
 
-  function inspectWatch(row) {
+  let lastInspected = null;
+
+  async function inspectWatch(row) {
     const box = $("watch-inspect");
     if (!box) return;
+    lastInspected = row;
     const quote = mergeQuote(row);
+    await ensureWatchSparks([row.ticker]);
     box.hidden = false;
     box.innerHTML = `<div class="inspect-head">
         <div>
           <p class="kicker">Watchlist</p>
           <h3>${row.name} <span class="muted">${row.ticker}</span></h3>
-          <p>${moneyShort(quote.price)} · ${pct(quote.day_change_pct)} · ${cap(quote.market_cap)}</p>
+          <p>${moneyTable(quote.price, inferListingCcy(quote))} · ${pct(quote.day_change_pct)} · ${capTable(quote.market_cap, inferListingCcy(quote))}</p>
         </div>
         <div class="inspect-actions">
           <button type="button" id="inspect-analytics">Analytics</button>
           <button type="button" class="ghost" id="inspect-close">Close</button>
         </div>
       </div>
+      <p class="muted tv-ccy"></p>
       <div class="tv-host" id="inspect-tv"></div>`;
     $("inspect-analytics")?.addEventListener("click", () => openCompany(row, true));
     $("inspect-close")?.addEventListener("click", () => { box.hidden = true; });
-    embedTradingView($("inspect-tv"), row.ticker, row.exchange);
+    paintDeskChart($("inspect-tv"), quote);
   }
 
   function groupWatchRows(rows) {
@@ -610,6 +990,7 @@
       sector: row.sector || extra.sector,
       industry: row.industry || extra.industry,
       exchange: row.exchange || extra.exchange,
+      currency: extra.currency || row.currency,
     };
   }
 
@@ -648,6 +1029,7 @@
       watchQuotes = {};
       for (const row of disc.results || []) watchQuotes[row.ticker] = row;
       watchSparks = spark.results || {};
+      await ensureTableFx(Object.values(watchQuotes).map((row) => inferListingCcy(row)));
       paintWatch(false);
     } catch {
       watchHydrateKey = "";
@@ -741,6 +1123,9 @@
       return value == null ? null : Number(value);
     }
     const quote = mergeQuote(row);
+    if (key === "price" || key === "market_cap") {
+      return convertTableMoney(quote[key], inferListingCcy(quote));
+    }
     const value = quote[key];
     return value == null || value === "" ? null : Number(value);
   }
@@ -788,11 +1173,11 @@
     }
     const body = $("watch-body");
     if (!body) return;
-    const query = ($("watch-q")?.value || "").trim().toLowerCase();
     const market = $("watch-market")?.value || "";
     const sector = $("watch-sector")?.value || "";
     const verdict = $("watch-verdict")?.value || "";
     const change = $("watch-change")?.value || "";
+    paintTableCurrencyHeads();
     const sort = $("watch-sort")?.value || "name";
     const dir = $("watch-dir")?.value || "asc";
     let rows = groupWatchRows(watchedRows().map(mergeQuote));
@@ -807,8 +1192,6 @@
       if (kept) $("watch-verdict").value = kept;
     }
     rows = rows.filter((row) => {
-      const blob = `${row.name} ${row.ticker} ${row.industry} ${row.sector} ${row.exchange || ""}`.toLowerCase();
-      if (query && !blob.includes(query)) return false;
       if (market && (row.exchange || row.market) !== market) return false;
       if (sector && row.sector !== sector) return false;
       if (verdict === "unanalyzed" && row.at) return false;
@@ -879,7 +1262,7 @@
       tr.appendChild(company);
       tr.insertAdjacentHTML(
         "beforeend",
-        `<td class="watch-num">${row.ticker}</td><td class="watch-num">${moneyShort(quote.price)}</td><td class="watch-num ${dayClass}">${pct(day)}</td><td class="watch-num">${cap(quote.market_cap)}</td><td class="watch-num">${pct(quote.revenue_growth)}</td><td class="watch-num">${pct(quote.earnings_growth)}</td><td class="watch-num">${pct(quote.roe)}</td><td class="watch-num">${num(quote.pe)}</td><td class="watch-num">${scoreText(row.score)}</td>`
+        `<td class="watch-num">${row.ticker}</td><td class="watch-num">${moneyTable(quote.price, inferListingCcy(quote))}</td><td class="watch-num ${dayClass}">${pct(day)}</td><td class="watch-num">${capTable(quote.market_cap, inferListingCcy(quote))}</td><td class="watch-num">${pct(quote.revenue_growth)}</td><td class="watch-num">${pct(quote.earnings_growth)}</td><td class="watch-num">${pct(quote.roe)}</td><td class="watch-num">${num(quote.pe)}</td><td class="watch-num">${scoreText(row.score)}</td>`
       );
       const verdictCell = document.createElement("td");
       verdictCell.className = "watch-verdict";
@@ -1189,7 +1572,7 @@
     ];
     const tableRows = metrics.map(([label, read]) => {
       const cells = picked.map((row) => compareCell(label, read(row))).join("");
-      return `<tr><td>${label}</td>${cells}</tr>`;
+      return `<tr><td>${termHtml(label)}</td>${cells}</tr>`;
     }).join("");
     const scoreRows = [
       ["Overall", "score"],
@@ -1343,8 +1726,11 @@
         gross_margin: extra.gross_margin,
         operating_margin: extra.operating_margin,
         profit_margin: extra.profit_margin,
+        currency: extra.currency || saved.currency,
       };
     });
+    await ensureTableFx(picked.map((row) => inferListingCcy(row)));
+    await ensureWatchSparks(tickers);
     const headers = picked.map((row) => compareHead(row, `${row.ticker}${row.at ? ` · Analyzed ${when(row.at)}` : " · Not analyzed"}`));
     const metrics = [
       ["Status", (row) => (row.at ? "Saved and analyzed" : "Saved — not analyzed")],
@@ -1354,12 +1740,12 @@
       ["News / external", (row) => scoreText(row.newsScore)],
       ["Verdict", (row) => row.label || "Not analyzed"],
       ["Market", (row) => row.exchange || row.market || "—"],
-      ["Current price", (row) => moneyShort(row.price)],
+      ["Current price", (row) => moneyTable(row.price, inferListingCcy(row))],
       ["Daily change", (row) => pct(row.day_change_pct)],
       ["1-week return", (row) => pct((watchSparks[row.ticker] || {}).week_return)],
       ["1-month return", (row) => pct((watchSparks[row.ticker] || {}).month_return)],
       ["Beta", (row) => num(row.beta, 2)],
-      ["Market cap", (row) => cap(row.market_cap)],
+      ["Market cap", (row) => capTable(row.market_cap, inferListingCcy(row))],
       ["Revenue growth", (row) => pct(row.revenue_growth)],
       ["Earnings growth", (row) => pct(row.earnings_growth)],
       ["ROE", (row) => pct(row.roe)],
@@ -1376,7 +1762,7 @@
       ["Current ratio", (row) => num(row.current_ratio, 2)],
       ["Free cash flow", (row) => cap(row.free_cashflow)],
     ];
-    const tableRows = metrics.map(([label, read]) => `<tr><td>${label}</td>${picked.map((row) => compareCell(label, read(row))).join("")}</tr>`).join("");
+    const tableRows = metrics.map(([label, read]) => `<tr><td>${termHtml(label)}</td>${picked.map((row) => compareCell(label, read(row))).join("")}</tr>`).join("");
     const extraCharts = [
       metricBars(picked, "Revenue growth", "revenue_growth", pct),
       metricBars(picked, "Earnings growth", "earnings_growth", pct),
@@ -1386,14 +1772,14 @@
     box.hidden = false;
     box.innerHTML = `<p class="kicker">Watchlist comparison</p>
       <h3>Companies you are tracking</h3>
-      <p class="compare-meta">This compares live names on your Watchlist, not saved History runs. Unanalyzed names show — / Not analyzed. Missing published fields show as —.</p>
-      <div class="dual-charts">${picked.slice(0, 4).map((row, index) => `<div><p class="kicker">${compareName(row)}</p><div class="tv-host" id="watch-tv-${index}"></div></div>`).join("")}</div>
+      <p class="compare-meta">This compares live names on your Watchlist, not saved History runs. Charts and money figures use the currency chosen above. Unanalyzed names show — / Not analyzed. Missing published fields show as —.</p>
+      <div class="dual-charts">${picked.slice(0, 4).map((row, index) => `<div><p class="kicker">${compareName(row)}</p><p class="muted tv-ccy">${chartCcyText(row, inferListingCcy(row) !== tableCurrency ? "converted" : "")}</p><div class="tv-host" id="watch-tv-${index}"></div></div>`).join("")}</div>
       <div class="compare-charts">${scoreBars(picked)}${extraCharts}</div>
       <div class="table-wrap"><table class="wide data-table compare-table">
         <thead><tr><th>Metric</th>${headers.map((item) => `<th>${item}</th>`).join("")}</tr></thead>
         <tbody>${tableRows}</tbody>
       </table></div>`;
-    picked.slice(0, 4).forEach((row, index) => embedTradingView($(`watch-tv-${index}`), row.ticker, row.exchange));
+    picked.slice(0, 4).forEach((row, index) => paintDeskChart($(`watch-tv-${index}`), row));
   }
 
   function researchMap() {
@@ -1509,7 +1895,9 @@
       if (!field || !op) return true;
       const meta = FILTER_FIELDS.find((item) => item[0] === field);
       const kind = meta ? meta[2] : "number";
-      const actual = row[field];
+      const actual = (field === "price" || field === "market_cap")
+        ? convertTableMoney(row[field], inferListingCcy(row))
+        : row[field];
       if (op === "available") return actual != null && actual !== "";
       if (op === "missing") return actual == null || actual === "";
       if (kind === "text") {
@@ -1544,7 +1932,7 @@
     if (!host) return;
     const row = document.createElement("div");
     row.className = "custom-row";
-    row.innerHTML = `<select class="cf-field">${FILTER_FIELDS.map((item) => `<option value="${item[0]}">${item[1]}</option>`).join("")}</select>
+    row.innerHTML = `<select class="cf-field term" tabindex="0">${FILTER_FIELDS.map((item) => `<option value="${item[0]}">${item[1]}</option>`).join("")}</select>
       <select class="cf-op">
         <option value="gt">Greater than</option>
         <option value="gte">Greater than or equal</option>
@@ -1560,6 +1948,12 @@
       <input class="cf-value" type="text" placeholder="Value" />
       <input class="cf-value-b" type="text" placeholder="And" hidden />`;
     const second = row.querySelector(".cf-value-b");
+    const field = row.querySelector(".cf-field");
+    const syncFieldTerm = () => {
+      if (field) field.dataset.term = field.selectedOptions[0]?.textContent.trim() || "";
+    };
+    field?.addEventListener("change", syncFieldTerm);
+    syncFieldTerm();
     row.querySelector(".cf-op").addEventListener("change", (event) => {
       second.hidden = event.target.value !== "between";
     });
@@ -1834,6 +2228,7 @@
     {
       id: "company",
       title: "Company",
+      term: "Company filters",
       open: true,
       hint: "Narrow the company universe. Selected values are combined with OR.",
       controls: [
@@ -1862,6 +2257,7 @@
     {
       id: "growth",
       title: "Growth",
+      term: "Growth filters",
       controls: [
         { type: "num", id: "rev", field: "revenue_growth", label: "Revenue growth", kind: "pct", presets: GROWTH_PRESETS, minPh: "Min %", maxPh: "Max %" },
         { type: "num", id: "earn", field: "earnings_growth", label: "Earnings growth", kind: "pct", presets: GROWTH_PRESETS, minPh: "Min %", maxPh: "Max %" },
@@ -1881,6 +2277,7 @@
     {
       id: "profit",
       title: "Profitability",
+      term: "Profitability filters",
       controls: [
         { type: "num", id: "roe", field: "roe", label: "ROE", kind: "pct", presets: ROE_PRESETS, minPh: "Min %", maxPh: "Max %" },
         { type: "num", id: "roa", field: "roa", label: "ROA", kind: "pct", presets: ROE_PRESETS, minPh: "Min %", maxPh: "Max %" },
@@ -1893,6 +2290,7 @@
     {
       id: "value",
       title: "Valuation",
+      term: "Valuation filters",
       hint: "Negative multiples and missing values are separate from the positive ranges.",
       controls: [
         { type: "num", id: "pe", field: "pe", label: "P/E", kind: "multiple", presets: MULTIPLE_PRESETS, minPh: "Min", maxPh: "Max" },
@@ -1906,6 +2304,7 @@
     {
       id: "health",
       title: "Financial Health",
+      term: "Financial health filters",
       controls: [
         {
           type: "num", id: "de", field: "debt_to_equity", label: "Debt / Equity", kind: "de",
@@ -1976,6 +2375,7 @@
     {
       id: "market",
       title: "Market Performance",
+      term: "Market performance filters",
       hint: "1-day and 1-year use published Yahoo fields. Other windows use daily price history when available.",
       controls: [
         { type: "num", id: "day", field: "day_change_pct", label: "1-day return", kind: "ret", presets: RETURN_PRESETS, minPh: "Min %", maxPh: "Max %" },
@@ -1992,6 +2392,7 @@
     {
       id: "div",
       title: "Dividends",
+      term: "Dividend filters",
       controls: [
         {
           type: "choice", id: "divpay", label: "Dividend-paying",
@@ -2031,6 +2432,7 @@
     {
       id: "dilagent",
       title: "Dilagent",
+      term: "Dilagent filters",
       hint: "Scores and verdicts appear after an Analytics run. These are screening controls, not recommendations.",
       controls: [
         { type: "num", id: "dscore", field: "score", label: "Dilagent score", kind: "score", presets: SCORE_PRESETS, minPh: "Min", maxPh: "Max" },
@@ -2074,7 +2476,7 @@
       const controls = group.controls.map((spec) => {
         if (spec.type === "multi") {
           return `<div class="ms is-drop" data-ms="${spec.id}" data-field="${spec.field}">
-            <span class="nf-label">${esc(spec.label)}</span>
+            ${termHtml(spec.label, spec.label, "nf-label")}
             <p class="ms-hint">Match any selected</p>
             <button type="button" class="ms-toggle" id="ms-toggle-${spec.id}">Any</button>
             <div class="ms-panel" id="ms-panel-${spec.id}" hidden>
@@ -2085,12 +2487,12 @@
         }
         if (spec.type === "choice") {
           return `<div class="nf" data-nf="${spec.id}" data-kind="choice">
-            <span class="nf-label">${esc(spec.label)}</span>
+            ${termHtml(spec.label, spec.label, "nf-label")}
             <select class="nf-preset" id="f-${spec.id}">${optionHtml(spec.presets)}</select>
           </div>`;
         }
         return `<div class="nf" data-nf="${spec.id}" data-field="${spec.field}" data-kind="${spec.kind}">
-          <span class="nf-label">${esc(spec.label)}</span>
+          ${termHtml(spec.label, spec.label, "nf-label")}
           ${spec.note ? `<p class="ms-hint">${esc(spec.note)}</p>` : ""}
           <select class="nf-preset" id="f-${spec.id}">${optionHtml(spec.presets)}</select>
           <div class="nf-custom" hidden>
@@ -2100,7 +2502,7 @@
         </div>`;
       }).join("");
       return `<details class="filter-group" data-group="${group.id}"${group.open ? " open" : ""}>
-        <summary>${esc(group.title)}<span class="fg-count"></span></summary>
+        <summary>${termHtml(group.title, group.term)}<span class="fg-count"></span></summary>
         ${group.hint ? `<p class="muted">${esc(group.hint)}</p>` : ""}
         <div class="filter-grid">${controls}</div>
       </details>`;
@@ -2130,6 +2532,9 @@
   }
 
   function rowMetric(row, field) {
+    if (field === "price" || field === "market_cap") {
+      return convertTableMoney(row[field], inferListingCcy(row));
+    }
     if (field === "score_delta") return scoreDelta(row);
     if (field === "debt_to_equity") return deRatio(row.debt_to_equity);
     if (field === "week52_change") return row.week52_change ?? row.year_return;
@@ -2678,6 +3083,7 @@
       for (const row of data.results || []) map[row.ticker] = row;
       if (!Object.keys(map).length) return;
       lastDiscover = lastDiscover.map((row) => (map[row.ticker] ? { ...row, ...map[row.ticker] } : row));
+      await ensureTableFx(Object.values(map).map((row) => inferListingCcy(row)));
       paintDiscoverRows(lastDiscover, true);
     } catch {
       discoverPageHydrateKey = "";
@@ -2725,6 +3131,7 @@
 
   function paintDiscoverRows(rows, keepPage) {
     lastDiscover = rows;
+    paintTableCurrencyHeads();
     const merged = includeFavourites(rows).map(mergeResearch).map(withSpark);
     fillMulti($("ms-country"), COUNTRY_CATALOG.concat(merged.map((row) => row.country)));
     fillMulti($("ms-market"), EXCHANGE_CATALOG.concat(merged.map((row) => row.exchange).filter(Boolean).map((value) => [value, value])));
@@ -2775,7 +3182,7 @@
       tr.appendChild(company);
       tr.insertAdjacentHTML(
         "beforeend",
-        `<td class="col-text">${row.exchange || "—"}</td><td class="col-text">${row.sector || "—"}</td><td class="col-text">${row.industry || "—"}</td><td class="col-num">${cap(row.market_cap)}</td><td class="col-num">${pct(row.revenue_growth)}</td><td class="col-num">${pct(row.earnings_growth)}</td><td class="col-num">${pct(row.roe)}</td><td class="col-num">${num(row.pe)}</td><td class="col-num">${scoreText(row.score)}</td>`
+        `<td class="col-text">${row.exchange || "—"}</td><td class="col-text">${row.sector || "—"}</td><td class="col-text">${row.industry || "—"}</td><td class="col-num">${capTable(row.market_cap, inferListingCcy(row))}</td><td class="col-num">${pct(row.revenue_growth)}</td><td class="col-num">${pct(row.earnings_growth)}</td><td class="col-num">${pct(row.roe)}</td><td class="col-num">${num(row.pe)}</td><td class="col-num">${scoreText(row.score)}</td>`
       );
       tr.appendChild(actions);
       body.appendChild(tr);
@@ -2800,7 +3207,9 @@
     try {
       const response = await fetch(`/api/discover?${params.toString()}`);
       const data = await response.json();
-      paintDiscoverRows(data.results || []);
+      const rows = data.results || [];
+      await ensureTableFx(rows.map((row) => inferListingCcy(row)));
+      paintDiscoverRows(rows);
     } catch {
       if (count) count.textContent = "Could not load published company data.";
     }
@@ -2945,7 +3354,7 @@
     if (view === "discover" && lastDiscover.length) paintDiscoverRows(lastDiscover, true);
   }
 
-  ["watch-q", "watch-market", "watch-sector", "watch-verdict", "watch-change"].forEach((id) => {
+  ["watch-market", "watch-sector", "watch-verdict", "watch-change"].forEach((id) => {
     $(id)?.addEventListener("input", paintWatch);
     $(id)?.addEventListener("change", paintWatch);
   });
@@ -3177,6 +3586,18 @@
   });
 
   window.Desk = { paint, toggleWatch, isWatched, addWatch };
+  readTableCurrency();
+  bindDeskTips();
+  decorateSortHeaders();
   buildScreener();
+  ["watch-currency", "discover-currency"].forEach((id) => {
+    $(id)?.addEventListener("change", (event) => setTableCurrency(event.target.value));
+  });
+  ensureTableFx([]).then(() => {
+    fillTableCurrencySelects();
+    paintTableCurrencyHeads();
+    paintWatch(false);
+    if (lastDiscover.length) paintDiscoverRows(lastDiscover, true);
+  });
   paint(currentView());
 })();

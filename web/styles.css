@@ -547,13 +547,45 @@ button:disabled { opacity: 0.5; cursor: wait; }
 }
 
 .report-search-field { flex: 1 1 220px; min-width: 180px; }
-.report-search-field input { width: 100%; }
+.report-search-field input { width: 100%; height: 40px; }
 
 .price {
   font-family: "IBM Plex Mono", monospace;
   font-size: 1rem;
   margin: 0 0 8px;
   color: var(--muted);
+}
+
+.price-row { margin: 0 0 8px; }
+
+.price-row .price { margin: 0 0 6px; }
+
+.price-fx {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+}
+
+.price-fx #price-ccy-note { margin: 0; }
+
+.price-ccy-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.price-ccy-label select {
+  height: 36px;
+  padding: 0 10px;
+  background: var(--paper);
+  color: var(--ink);
+  border: 1px solid #c5c8ce;
+  border-radius: 4px;
+  min-width: 140px;
 }
 
 .filing-line { margin: 0 0 8px; }
@@ -751,6 +783,16 @@ h3 {
 
 .chart-head h3 { margin: 0; }
 
+.tv-ccy {
+  margin: 0 0 8px;
+  font-size: 0.82rem;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.chart-head .tv-ccy { margin: 4px 0 0; }
+
 .tv-link {
   color: var(--accent);
   font-weight: 600;
@@ -802,14 +844,14 @@ table.wide th.col-num,
 table.wide td.col-num,
 table.wide td.watch-num {
   font-family: "IBM Plex Mono", monospace;
-  text-align: right;
+  text-align: center;
   padding-left: 12px;
 }
 
 table.wide th.col-text,
 table.wide td.col-text {
   font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
-  text-align: left;
+  text-align: center;
 }
 
 table.wide th.watch-verdict,
@@ -846,6 +888,53 @@ table.wide td.watch-verdict {
 
 .term:hover .term-tip,
 .term:focus .term-tip { display: block; }
+
+.nf-label.term {
+  width: fit-content;
+}
+
+.filter-group summary .term,
+.filter-box summary .term {
+  font: inherit;
+  color: inherit;
+}
+
+.kicker.term {
+  width: fit-content;
+}
+
+.data-table .th-sort .term {
+  color: inherit;
+  font: inherit;
+  font-weight: inherit;
+}
+
+.desk-term-tip {
+  position: fixed;
+  z-index: 80;
+  width: min(300px, calc(100vw - 24px));
+  background: var(--rail);
+  color: #f1f3f4;
+  padding: 10px 12px;
+  border-radius: 6px;
+  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+  font-size: 0.8rem;
+  font-weight: 400;
+  line-height: 1.4;
+  letter-spacing: 0;
+  text-transform: none;
+  box-shadow: 0 8px 24px rgba(15, 20, 25, 0.18);
+  pointer-events: none;
+}
+
+.app-toolbar select[data-term] {
+  cursor: help;
+}
+
+.data-table .th-ccy {
+  font-weight: 600;
+  color: inherit;
+}
 
 .deep {
   margin: 36px 0;
@@ -1144,14 +1233,18 @@ table.wide td.watch-verdict {
 .app-toolbar {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  align-items: center;
+  gap: 8px;
   margin: 18px 0 16px;
 }
 
 .app-toolbar input,
 .app-toolbar select,
+.app-toolbar button,
 .filter-grid select,
-.discover-search input {
+.discover-search input,
+.discover-sort select,
+.discover-sort button {
   height: 40px;
   padding: 0 12px;
   background: var(--paper);
@@ -1159,9 +1252,24 @@ table.wide td.watch-verdict {
   border: 1px solid #c5c8ce;
   border-radius: 4px;
   min-width: 0;
+  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+  font-size: 0.88rem;
+  font-weight: 500;
+  line-height: 1.2;
 }
 
 .app-toolbar input { flex: 1 1 220px; }
+
+.app-toolbar button,
+.discover-sort button {
+  width: auto;
+  white-space: nowrap;
+}
+
+.app-toolbar button.ghost,
+.discover-sort button.ghost {
+  background: var(--panel);
+}
 
 .table-wrap { overflow-x: auto; }
 
@@ -1171,6 +1279,7 @@ table.wide td.watch-verdict {
 .data-table td {
   padding: 10px 12px;
   vertical-align: middle;
+  text-align: center;
 }
 
 table.wide.data-table th,
@@ -1194,7 +1303,7 @@ table.wide.data-table button,
   font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
 }
 
-.data-table td:last-child { font-family: inherit; text-align: right; }
+.data-table td:last-child { font-family: inherit; text-align: center; }
 
 .star-btn,
 .result-star {
@@ -1248,6 +1357,7 @@ table.wide.data-table button,
   display: block;
   width: 72px;
   height: 22px;
+  margin: 0 auto;
 }
 
 #watch-table th,
@@ -1315,12 +1425,12 @@ table.wide.data-table button,
 
 #discover-table th.col-num {
   font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
-  text-align: right;
+  text-align: center;
 }
 
 #discover-table th.col-text,
 #discover-table td.col-text {
-  text-align: left;
+  text-align: center;
 }
 
 #discover-table th.discover-star,
@@ -1333,10 +1443,11 @@ table.wide.data-table button,
 .data-table .th-sort {
   display: inline-flex;
   align-items: baseline;
+  justify-content: center;
   gap: 6px;
   height: auto;
   min-height: 0;
-  width: auto;
+  width: 100%;
   margin: 0;
   padding: 0;
   background: none;
@@ -1346,20 +1457,24 @@ table.wide.data-table button,
   box-shadow: none;
   font: inherit;
   font-weight: 600;
-  text-align: inherit;
+  text-align: center;
   cursor: pointer;
   white-space: nowrap;
   line-height: 1.3;
 }
 
-.data-table th.col-num .th-sort {
-  width: 100%;
-  justify-content: flex-end;
-}
-
-.data-table th.watch-verdict .th-sort {
+.data-table th.col-num .th-sort,
+.data-table th.watch-verdict .th-sort,
+.data-table th.col-text .th-sort {
   width: 100%;
   justify-content: center;
+}
+
+.data-table th.watch-company .th-sort,
+.data-table th.report-company .th-sort,
+.data-table th.discover-company .th-sort {
+  justify-content: flex-start;
+  text-align: left;
 }
 
 .data-table .th-sort:hover,
@@ -1449,7 +1564,7 @@ tr.is-selecting .row-actions button {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  justify-content: flex-end;
+  justify-content: center;
 }
 
 .row-actions button {
@@ -1799,8 +1914,7 @@ tr.is-selecting .row-actions button {
 }
 
 .nf-preset,
-.nf-custom input,
-.discover-sort select {
+.nf-custom input {
   width: 100%;
   height: 40px;
   padding: 0 12px;
@@ -1845,23 +1959,35 @@ tr.is-selecting .row-actions button {
 .discover-results-bar {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
+  align-items: center;
   gap: 16px;
   flex-wrap: wrap;
   margin: 8px 0 12px;
 }
 
-.discover-results-meta { min-width: 0; flex: 1 1 280px; }
-.discover-results-bar .result-count { margin: 0 0 8px; }
+.discover-results-meta {
+  min-width: 0;
+  flex: 1 1 280px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.discover-results-bar .result-count {
+  margin: 0;
+  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+  font-size: 0.88rem;
+  font-weight: 500;
+}
 
 .discover-sort {
   display: flex;
-  gap: 10px;
-  align-items: end;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
 }
 
 .discover-sort label { margin: 0; }
-.discover-sort select { min-width: 160px; }
+.discover-sort select { min-width: 150px; width: auto; }
 #discover-favs-only.is-on {
   background: #e8eef9;
   border-color: var(--accent);
@@ -2154,6 +2280,30 @@ tr.is-selecting .row-actions button {
 .inspect-head h3 { margin: 0 0 6px; }
 .inspect-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .inspect-box .tv-host { height: 420px; margin-top: 12px; }
+.inspect-box .tv-host.is-fx,
+.dual-charts .tv-host.is-fx {
+  height: auto;
+}
+
+.fx-chart-last {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 1.05rem;
+  margin: 0 0 6px;
+}
+
+.fx-chart-svg {
+  display: block;
+  width: 100%;
+  height: 200px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.tv-host.is-fx .tv-link {
+  display: inline-block;
+  margin-top: 8px;
+}
 
 .ms.is-drop { position: relative; }
 

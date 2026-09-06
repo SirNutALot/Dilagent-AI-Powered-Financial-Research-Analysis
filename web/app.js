@@ -36,11 +36,89 @@ function show(el, on = true) {
 
 function money(value, currency) {
   if (value == null) return "—";
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: currency || "USD",
-    maximumFractionDigits: 2,
-  }).format(value);
+  const code = currency || "USD";
+  try {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: code,
+      maximumFractionDigits: 2,
+    }).format(value);
+  } catch {
+    return `${Number(value).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${code}`;
+  }
+}
+
+let lastResult = null;
+let fxCatalog = [];
+let fxRates = { USD: 1 };
+let analyticsCcy = "";
+
+function currencyName(code) {
+  const hit = fxCatalog.find((item) => item.code === code);
+  return hit ? hit.label : code;
+}
+
+function convertMoney(value, from, to) {
+  if (value == null || Number.isNaN(Number(value))) return null;
+  const src = String(from || "USD").toUpperCase();
+  const dst = String(to || src).toUpperCase();
+  if (src === dst) return Number(value);
+  const srcRate = fxRates[src];
+  const dstRate = fxRates[dst];
+  if (!srcRate || !dstRate) return null;
+  return Number(value) * srcRate / dstRate;
+}
+
+async function ensureFx(codes) {
+  const needed = [...new Set((codes || []).map((code) => String(code || "").toUpperCase()).filter((code) => code && fxRates[code] == null))];
+  if (!needed.length && fxCatalog.length) return;
+  try {
+    const params = needed.length ? `?currencies=${encodeURIComponent(needed.join(","))}` : "";
+    const data = await fetch(`/api/fx${params}`).then((res) => res.json());
+    fxCatalog = data.currencies || fxCatalog;
+    Object.assign(fxRates, data.rates || {});
+    fillPriceCcy();
+  } catch {
+    /* keep the listing currency */
+  }
+}
+
+function fillPriceCcy() {
+  const select = $("price-ccy");
+  const listing = String(lastResult?.company?.currency || "USD").toUpperCase();
+  if (!select) return;
+  const codes = new Map((fxCatalog || []).map((item) => [item.code, item.label]));
+  if (listing && !codes.has(listing)) codes.set(listing, listing);
+  const current = select.value || analyticsCcy || listing;
+  select.innerHTML = [...codes.entries()].map(([code, label]) => (
+    `<option value="${code}">${label} (${code})</option>`
+  )).join("");
+  if (codes.has(current)) select.value = current;
+}
+
+function paintAnalyticsPrice() {
+  const host = $("price");
+  const note = $("price-ccy-note");
+  const box = $("price-fx");
+  const company = lastResult?.company;
+  if (!host || !company) return;
+  const listing = String(company.currency || "USD").toUpperCase();
+  const shown = String(analyticsCcy || listing).toUpperCase();
+  const price = convertMoney(company.price, listing, shown);
+  const mcap = convertMoney(company.market_cap, listing, shown);
+  const change = company.change != null ? ` ${pct(company.change)}` : "";
+  const capText = mcap != null ? ` · ${cap(mcap)} mkt cap` : "";
+  const converted = price != null;
+  host.textContent = `${money(converted ? price : company.price, converted ? shown : listing)}${change}${capText}`;
+  if (box) box.hidden = false;
+  if (!note) return;
+  if (shown === listing) {
+    note.textContent = `Listing currency: ${currencyName(listing)} (${listing}).`;
+  } else if (!converted) {
+    note.textContent = `Could not convert from ${listing}. Showing the listing currency.`;
+  } else {
+    note.textContent = `Converted to ${currencyName(shown)} (${shown}) with Yahoo FX. Listing currency is ${listing}. Scores are unchanged.`;
+  }
 }
 
 function cap(value) {
@@ -137,7 +215,89 @@ const GLOSSARY = {
   "Investing cash flow": "Cash spent or received from buying or selling long-term assets and investments. Often negative at growing firms.",
   "Financing cash flow": "Cash from issuing shares or debt, or cash paid as buybacks, dividends, and debt repayments.",
   "Net cash flow": "The net change in the cash balance over the period.",
+  Company: "The listed company name Dilagent shows for that ticker.",
+  Ticker: "The exchange symbol Dilagent uses to fetch quotes, filings, and published financials.",
+  Price: "The latest published last price for that listing.",
+  "Daily change": "How much the last price moved versus the prior close.",
+  "Day change": "The absolute price move versus the prior close, in the listing currency.",
+  Trend: "One-week price change from daily history, shown as a sparkline when Dilagent has enough closes.",
+  Date: "When this Analytics snapshot was saved to History.",
+  Horizon: "The look-ahead window used for that Analytics run — the same window Compare uses when it re-runs a name.",
+  Status: "Whether the saved History run matches the horizon you picked, or Dilagent needs to re-run it.",
+  Market: "The exchange or market the ticker trades on, such as NASDAQ, NSE, or BSE.",
+  "Exchange / Market": "The stock exchange or market the listing trades on. Selected markets are combined with OR.",
+  Exchange: "The stock exchange or market the listing trades on.",
+  Sector: "Yahoo’s published sector for the company — a broad industry grouping.",
+  Industry: "A more specific industry group under the published sector.",
+  Country: "The published country of the listing.",
+  Region: "A broader geography inferred from the listing, such as North America or Asia.",
+  "Company size": "A published size bucket when Yahoo provides one, such as large-cap or small-cap.",
+  "Security type": "What Yahoo says this quote is — usually equity, sometimes an ETF or other security.",
+  "Market capitalization": "Shares outstanding times the share price. The market’s current value of the equity.",
+  "Profit growth": "Published quarterly earnings growth — how fast profit changed in the latest quarter Yahoo reports.",
+  "Growth direction": "Whether published growth looks declining, flat, growing, or strong. Strong uses revenue growth of 20% or more.",
+  "1-day return": "Price change versus the prior close.",
+  "1-week return": "Price change over the last week, from daily history when Dilagent has it.",
+  "1-month return": "Price change over the last month, from daily history when Dilagent has it.",
+  "3-month return": "Price change over about the last quarter, from daily history when Dilagent has it.",
+  "6-month return": "Price change over about the last half year, from daily history when Dilagent has it.",
+  "YTD return": "Price change since the start of this calendar year.",
+  "1-year return": "Price change over the last year. Discover uses Yahoo’s 52-week change when that field is published.",
+  "3-year return": "Price change over the last three years, from daily history when Dilagent has it.",
+  "5-year return": "Price change over the last five years, from daily history when Dilagent has it.",
+  "52-week change": "Price change over the last year, from Yahoo’s published 52-week field.",
+  "52-week position": "Where today’s price sits between the one-year low and high. 100% is at the high.",
+  "Distance from 52-week high": "How far the price is below the one-year high.",
+  "Distance from 52-week low": "How far the price is above the one-year low.",
+  "Price vs 50-day average": "Last price versus the 50-day simple moving average. Above can mean a shorter-term uptrend.",
+  "Price vs 200-day average": "Last price versus the 200-day simple moving average. A common longer-term trend check.",
+  Revenue: "Latest published sales — what customers paid, before costs.",
+  "Net income": "Latest published net profit, the bottom line after interest and tax.",
+  "Quarterly earnings growth": "How fast profit changed in the latest published quarter.",
+  "Enterprise value": "Market cap plus debt, minus cash — a fuller takeover-style value than market cap alone.",
+  "Book value / share": "Accounting net assets per share. Not the same as what the business would sell for.",
+  "FCF margin": "Free cash flow as a share of sales. How much of each unit of sales becomes spare cash.",
+  "Net debt": "Total debt minus cash. Negative means the company holds more cash than debt.",
+  "Total debt": "Interest-bearing borrowings — short-term plus long-term.",
+  "Dividend per share": "The latest published annual dividend paid on one share, before tax.",
+  "Dividend-paying": "Whether the company currently pays a cash dividend, from published yield or dividend rate.",
+  "Insider ownership": "Share of the company owned by management and other insiders.",
+  "Institutional ownership": "Share owned by funds, insurers, and other institutions.",
+  "Price / Book": "Price-to-book. Share price versus the accounting net worth per share. Useful for banks and asset-heavy firms; less so for software.",
+  "Price / Sales": "Price-to-sales. Share price versus revenue. Handy when earnings are lumpy or the company is not yet profitable.",
+  "EV / EBITDA": "Enterprise value divided by EBITDA. A common ‘how expensive is the whole business’ multiple, before interest and depreciation.",
+  "EV / Sales": "Enterprise value divided by sales. Used when profit is thin or negative.",
+  "Debt / Equity": "How much borrowed money sits against shareholders’ funds. Higher means more leverage risk.",
+  "Dilagent score": "Combined investability score from the last Analytics run. This is confidence in the story, not a predicted return.",
+  "Fundamentals score": "Pillar score from reported financials — growth, profitability, leverage, and cash.",
+  "Technicals score": "Pillar score from price trend and momentum. Not a forecast.",
+  "News / external score": "Pillar score from the headline and external-risk scan.",
+  "Technical score": "Pillar score from price trend and momentum. Not a forecast.",
+  "News score": "Pillar score from the headline and external-risk scan.",
+  Verdict: "Dilagent’s combined label from the last Analytics run — investable, cautious, or not. Educational, not a recommendation.",
+  "Score change": "How the Dilagent score moved versus the previous saved run for that company.",
+  "Favourites only": "Limit Discover to companies you have starred on Watchlist.",
+  "Company filters": "Narrow the universe by country, exchange, sector, industry, or market cap. Selected lists are combined with OR.",
+  "Growth filters": "How fast published sales and profit are changing. Missing growth figures drop out of a numeric filter.",
+  "Profitability filters": "How much of sales or capital turns into profit — ROE, ROA, and margins.",
+  "Valuation filters": "How expensive the shares look versus earnings, book, sales, or enterprise value. Negative multiples are kept separate.",
+  "Financial health filters": "Balance-sheet and cash checks — leverage, liquidity, and cash flow.",
+  "Market performance filters": "Published price returns. 1-day and 1-year use Yahoo fields; other windows use daily history when available.",
+  "Dividend filters": "Whether the company pays a dividend, how much yield it offers, and how stretched the payout is.",
+  "Dilagent filters": "Scores and verdicts appear only after an Analytics run. These are screening controls, not recommendations.",
+  Fundamentals: "The reported-financials pillar — growth, profitability, leverage, and cash.",
+  Technicals: "The price-trend and momentum pillar. Not a forecast.",
+  "News / external": "The headline and external-risk pillar.",
+  "Overall score": "Combined investability score from the last Analytics run. This is confidence in the story, not a predicted return.",
+  "Current price": "The latest published last price for that listing.",
+  Metric: "A published figure or Dilagent score used to compare these companies side by side.",
+  "Company name": "The listed company name Dilagent shows for that ticker.",
+  "Additional published field": "An extra condition on a field Dilagent actually stores. Rows without a required number are excluded unless you choose “is not available”.",
+  Filters: "Screen the current Discover result set. Hover a filter name for what that field measures.",
+  "Show prices in": "Convert Watchlist price and market cap, and Discover market cap, into one currency so mixed listings can be compared. Scores and ratios stay as published. Analytics keeps its own listing-currency switcher.",
 };
+
+window.GLOSSARY = GLOSSARY;
 
 function termNode(label, term) {
   const hint = GLOSSARY[term] || GLOSSARY[label];
@@ -523,10 +683,24 @@ document.addEventListener("click", (event) => {
   }
 });
 
+function paintChartCcy() {
+  const note = $("tv-ccy");
+  if (!note) return;
+  const listing = String(lastResult?.company?.currency || "").toUpperCase();
+  if (!listing) {
+    note.hidden = true;
+    note.textContent = "";
+    return;
+  }
+  note.hidden = false;
+  note.textContent = `TradingView prices are in ${currencyName(listing)} (${listing}).`;
+}
+
 function loadTradingView(tv) {
   const host = $("tv-host");
   const link = $("tv-link");
   host.innerHTML = "";
+  paintChartCcy();
   if (!tv || !tv.symbol) {
     link.hidden = true;
     return;
@@ -601,11 +775,18 @@ function renderCombined(verdict) {
 function render(data) {
   const c = data.company;
   const v = data.verdict;
+  lastResult = data;
+  analyticsCcy = String(c.currency || "USD").toUpperCase();
   $("meta").textContent = [c.ticker, c.sector, c.industry, c.exchange, data.horizon_label].filter(Boolean).join(" · ");
   $("name").textContent = c.name;
-  const change = c.change != null ? ` ${pct(c.change)}` : "";
-  const mcap = c.market_cap ? ` · ${cap(c.market_cap)} mkt cap` : "";
-  $("price").textContent = `${money(c.price, c.currency)}${change}${mcap}`;
+  fillPriceCcy();
+  paintAnalyticsPrice();
+  ensureFx([analyticsCcy]).then(() => {
+    fillPriceCcy();
+    if ($("price-ccy")) $("price-ccy").value = analyticsCcy;
+    paintAnalyticsPrice();
+    paintChartCcy();
+  });
   $("filing-line").textContent = (c.filing || {}).label || "";
   renderSources(c.filing || {});
   $("verdict-label").textContent = v.label;
@@ -1243,3 +1424,11 @@ addForm.addEventListener("submit", async (event) => {
     $("add-run").disabled = false;
   }
 });
+
+$("price-ccy")?.addEventListener("change", async () => {
+  analyticsCcy = $("price-ccy").value;
+  await ensureFx([lastResult?.company?.currency, analyticsCcy]);
+  paintAnalyticsPrice();
+});
+
+ensureFx([]);

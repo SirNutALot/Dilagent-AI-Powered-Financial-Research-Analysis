@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/styles.css?v=61" />
+  <link rel="stylesheet" href="/styles.css?v=68" />
 </head>
 <body>
   <header class="top">
@@ -110,7 +110,15 @@
             <span id="name"></span>
             <button type="button" class="star-btn result-star" id="result-star" hidden title="Add to Watchlist" aria-label="Add to Watchlist">☆</button>
           </h2>
-          <p class="price" id="price"></p>
+          <div class="price-row">
+            <p class="price" id="price"></p>
+            <div class="price-fx" id="price-fx" hidden>
+              <p class="muted" id="price-ccy-note"></p>
+              <label class="price-ccy-label">Show price in
+                <select id="price-ccy" aria-label="Display currency"></select>
+              </label>
+            </div>
+          </div>
           <p class="filing-line" id="filing-line"></p>
           <p class="sources" id="sources"></p>
           <p class="briefing" id="briefing"></p>
@@ -171,7 +179,10 @@
 
       <section class="chart-block">
         <div class="chart-head">
-          <h3>Chart</h3>
+          <div>
+            <h3>Chart</h3>
+            <p class="muted tv-ccy" id="tv-ccy"></p>
+          </div>
           <a id="tv-link" class="tv-link" href="#" target="_blank" rel="noopener">Open in TradingView</a>
         </div>
         <div id="tv-host" class="tv-host"></div>
@@ -253,6 +264,7 @@
           </div>
         </div>
         <div id="dash-moves"></div>
+        <p class="muted tv-ccy" id="dash-mover-ccy" hidden></p>
         <div class="tv-host dash-mover-tv" id="dash-mover-tv" hidden></div>
       </article>
       <div class="dash-grid">
@@ -289,7 +301,7 @@
     <section id="view-watchlist" class="app-page" hidden>
       <p class="kicker">Watchlist</p>
       <h2>Your Watchlist</h2>
-      <p class="muted">Names you are tracking. Quotes and charts. Analytics is optional.</p>
+      <p class="muted">Names you are tracking. Quotes and charts. Analytics is optional. Rest your cursor on a column or filter name if you want it explained.</p>
       <form id="watch-search" class="discover-search" autocomplete="off">
         <div class="field company-field">
           <label for="watch-find">Search companies</label>
@@ -300,14 +312,13 @@
       <div id="watch-inspect" class="inspect-box" hidden></div>
       <div id="watch-compare" class="compare-box" hidden></div>
       <div class="app-toolbar">
-        <input id="watch-q" type="search" placeholder="Filter saved names" />
-        <select id="watch-market"><option value="">Market</option></select>
-        <select id="watch-sector"><option value="">Sector</option></select>
-        <select id="watch-verdict">
+        <select id="watch-market" data-term="Market"><option value="">Market</option></select>
+        <select id="watch-sector" data-term="Sector"><option value="">Sector</option></select>
+        <select id="watch-verdict" data-term="Verdict">
           <option value="">Verdict</option>
           <option value="unanalyzed">Not analyzed</option>
         </select>
-        <select id="watch-change">
+        <select id="watch-change" data-term="Score change">
           <option value="">Score change</option>
           <option value="up">Improving</option>
           <option value="down">Declining</option>
@@ -331,6 +342,7 @@
           <option value="asc">A–Z</option>
           <option value="desc">Z–A</option>
         </select>
+        <select id="watch-currency" aria-label="Show prices in" data-term="Show prices in"></select>
       </div>
       <div id="watch-manage-bar" class="manage-bar">
         <button type="button" id="watch-compare-btn">Compare</button>
@@ -344,9 +356,9 @@
               <th class="manage-only" hidden></th>
               <th class="watch-company"><button type="button" class="th-sort" data-sort="name">Company <span class="th-mark" hidden></span></button></th>
               <th class="col-num"><button type="button" class="th-sort" data-sort="ticker">Ticker <span class="th-mark" hidden></span></button></th>
-              <th class="col-num"><button type="button" class="th-sort" data-sort="price">Price <span class="th-mark" hidden></span></button></th>
+              <th class="col-num"><button type="button" class="th-sort" data-sort="price">Price <span class="th-ccy">(USD)</span> <span class="th-mark" hidden></span></button></th>
               <th class="col-num"><button type="button" class="th-sort" data-sort="day_change_pct">Daily change <span class="th-mark" hidden></span></button></th>
-              <th class="col-num"><button type="button" class="th-sort" data-sort="market_cap">Market cap <span class="th-mark" hidden></span></button></th>
+              <th class="col-num"><button type="button" class="th-sort" data-sort="market_cap">Market cap <span class="th-ccy">(USD)</span> <span class="th-mark" hidden></span></button></th>
               <th class="col-num"><button type="button" class="th-sort" data-sort="revenue_growth">Rev. growth <span class="th-mark" hidden></span></button></th>
               <th class="col-num"><button type="button" class="th-sort" data-sort="earnings_growth">Earn. growth <span class="th-mark" hidden></span></button></th>
               <th class="col-num"><button type="button" class="th-sort" data-sort="roe">ROE <span class="th-mark" hidden></span></button></th>
@@ -365,13 +377,13 @@
     <section id="view-reports" class="app-page" hidden>
       <p class="kicker">History</p>
       <h2>Research history</h2>
-      <p class="muted">Saved Analytics runs only. One snapshot per company. Compare uses one horizon for every name — Dilagent re-runs a company if its saved window does not match.</p>
+      <p class="muted">Saved Analytics runs only. One snapshot per company. Compare uses one horizon for every name — Dilagent re-runs a company if its saved window does not match. Rest your cursor on a column name if you want it explained.</p>
       <div class="app-toolbar">
         <div class="field company-field report-search-field">
           <input id="report-q" type="search" placeholder="Search saved runs" autocomplete="off" />
           <ul id="report-suggestions" class="suggestions" hidden></ul>
         </div>
-        <select id="report-verdict"><option value="">Verdict</option></select>
+        <select id="report-verdict" data-term="Verdict"><option value="">Verdict</option></select>
         <select id="report-sort">
           <option value="at">Sort: date</option>
           <option value="name">Sort: company</option>
@@ -384,7 +396,7 @@
           <option value="desc">High to low</option>
           <option value="asc">Low to high</option>
         </select>
-        <select id="report-horizon" aria-label="History horizon">
+        <select id="report-horizon" aria-label="History horizon" data-term="Horizon">
           <option value="1">Horizon: 1 day</option>
           <option value="5">Horizon: 1 week</option>
           <option value="10">Horizon: 2 weeks</option>
@@ -425,7 +437,7 @@
     <section id="view-discover" class="app-page" hidden>
       <p class="kicker">Discover</p>
       <h2>What to research next</h2>
-      <p class="muted">Search and filter published financials, then save or open Analytics. Dilagent scores appear only after an Analytics run. Filters use fields this app actually stores — missing values show as not available.</p>
+      <p class="muted">Search and filter published financials, then save or open Analytics. Dilagent scores appear only after an Analytics run. Filters use fields this app actually stores — missing values show as not available. Rest your cursor on a filter or column name if you want it explained.</p>
       <form id="discover-form" class="discover-search" autocomplete="off">
         <div class="field company-field">
           <label for="discover-q">Company search</label>
@@ -438,11 +450,11 @@
         </div>
       </form>
       <details class="filter-box" open>
-        <summary>Filters</summary>
-        <p class="filter-lead muted">Screen this result set. Country, exchange, sector, and industry are dropdowns and include the full published lists, not just the current page. Selected values are combined with OR. Numerical filters accept a preset or a custom minimum and/or maximum.</p>
+        <summary><span class="term" tabindex="0" data-term="Filters">Filters</span></summary>
+        <p class="filter-lead muted">Screen this result set. Country, exchange, sector, and industry are dropdowns and include the full published lists, not just the current page. Selected values are combined with OR. Numerical filters accept a preset or a custom minimum and/or maximum. Rest your cursor on a filter name for the same explanations Analytics uses.</p>
         <div class="filter-groups" id="screener-groups"></div>
         <div class="custom-filters">
-          <p class="kicker">Additional published field</p>
+          <p class="kicker term" tabindex="0" data-term="Additional published field">Additional published field</p>
           <p class="muted">Optional extra condition on a field Dilagent actually stores. Rows without a required numeric field are excluded unless you choose “is not available”.</p>
           <div id="custom-filter-rows"></div>
           <button type="button" class="ghost" id="add-filter">Add filter</button>
@@ -454,36 +466,33 @@
           <div class="filter-chips" id="filter-chips" hidden></div>
         </div>
         <div class="discover-sort">
-          <button type="button" class="ghost" id="discover-favs-only" aria-pressed="false">Favourites only</button>
-          <label>Sort by
-            <select id="discover-sort">
-              <option value="">Relevance</option>
-              <option value="name">Company name</option>
-              <option value="exchange">Market</option>
-              <option value="sector">Sector</option>
-              <option value="industry">Industry</option>
-              <option value="score">Dilagent score</option>
-              <option value="market_cap">Market cap</option>
-              <option value="revenue_growth">Revenue growth</option>
-              <option value="earnings_growth">Earnings growth</option>
-              <option value="roe">ROE</option>
-              <option value="pe">P/E</option>
-              <option value="day_change_pct">1-day return</option>
-              <option value="week_return">1-week return</option>
-              <option value="month_return">1-month return</option>
-              <option value="week52_change">1-year return</option>
-              <option value="dividend_yield">Dividend yield</option>
-              <option value="debt_to_equity">Debt / Equity</option>
-              <option value="free_cashflow">Free cash flow</option>
-              <option value="price">Price</option>
-            </select>
-          </label>
-          <label>Order
-            <select id="discover-dir">
-              <option value="desc">High to low</option>
-              <option value="asc">Low to high</option>
-            </select>
-          </label>
+          <button type="button" class="ghost" id="discover-favs-only" aria-pressed="false" data-term="Favourites only">Favourites only</button>
+          <select id="discover-sort" aria-label="Sort by">
+            <option value="">Sort: relevance</option>
+            <option value="name">Sort: company name</option>
+            <option value="exchange">Sort: market</option>
+            <option value="sector">Sort: sector</option>
+            <option value="industry">Sort: industry</option>
+            <option value="score">Sort: Dilagent score</option>
+            <option value="market_cap">Sort: market cap</option>
+            <option value="revenue_growth">Sort: revenue growth</option>
+            <option value="earnings_growth">Sort: earnings growth</option>
+            <option value="roe">Sort: ROE</option>
+            <option value="pe">Sort: P/E</option>
+            <option value="day_change_pct">Sort: 1-day return</option>
+            <option value="week_return">Sort: 1-week return</option>
+            <option value="month_return">Sort: 1-month return</option>
+            <option value="week52_change">Sort: 1-year return</option>
+            <option value="dividend_yield">Sort: dividend yield</option>
+            <option value="debt_to_equity">Sort: Debt / Equity</option>
+            <option value="free_cashflow">Sort: free cash flow</option>
+            <option value="price">Sort: price</option>
+          </select>
+          <select id="discover-dir" aria-label="Order">
+            <option value="desc">High to low</option>
+            <option value="asc">Low to high</option>
+          </select>
+          <select id="discover-currency" aria-label="Show prices in" data-term="Show prices in"></select>
         </div>
       </div>
       <div class="table-wrap">
@@ -495,7 +504,7 @@
               <th class="col-text"><button type="button" class="th-sort" data-sort="exchange">Market <span class="th-mark" hidden></span></button></th>
               <th class="col-text"><button type="button" class="th-sort" data-sort="sector">Sector <span class="th-mark" hidden></span></button></th>
               <th class="col-text"><button type="button" class="th-sort" data-sort="industry">Industry <span class="th-mark" hidden></span></button></th>
-              <th class="col-num"><button type="button" class="th-sort" data-sort="market_cap">Market cap <span class="th-mark" hidden></span></button></th>
+              <th class="col-num"><button type="button" class="th-sort" data-sort="market_cap">Market cap <span class="th-ccy">(USD)</span> <span class="th-mark" hidden></span></button></th>
               <th class="col-num"><button type="button" class="th-sort" data-sort="revenue_growth">Revenue growth <span class="th-mark" hidden></span></button></th>
               <th class="col-num"><button type="button" class="th-sort" data-sort="earnings_growth">Earnings growth <span class="th-mark" hidden></span></button></th>
               <th class="col-num"><button type="button" class="th-sort" data-sort="roe">ROE <span class="th-mark" hidden></span></button></th>
@@ -601,7 +610,7 @@
     </aside>
   </div>
   <script src="/tape.js?v=49"></script>
-  <script src="/app.js?v=56"></script>
-  <script src="/desk.js?v=62"></script>
+  <script src="/app.js?v=60"></script>
+  <script src="/desk.js?v=67"></script>
 </body>
 </html>

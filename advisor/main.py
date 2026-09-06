@@ -10,6 +10,7 @@ from advisor.config import APP_NAME, HORIZONS, WEB_DIR
 from advisor.catalog import remember_company
 from advisor.discover import discover, similar_companies, snapshot, sparks
 from advisor.filings import list_filers, mark_uploaded_report, warm_filers
+from advisor.fx import fx_table
 from advisor.methodology import methodology
 from advisor.news import favourite_updates, market_desk, warm_desk
 from advisor.rag import has_filing, save_filing
@@ -42,6 +43,12 @@ def health() -> dict[str, str]:
 @app.get("/api/methodology")
 def api_methodology() -> dict:
     return methodology()
+
+
+@app.get("/api/fx")
+def api_fx(currencies: str = Query(default="", max_length=200)) -> dict:
+    codes = [part.strip().upper() for part in currencies.split(",") if part.strip()]
+    return fx_table(codes)
 
 
 def _query(q: str | None, ticker: str | None) -> str:
