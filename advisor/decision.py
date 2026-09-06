@@ -5,16 +5,23 @@ from typing import Any
 from advisor.config import HORIZON_LABELS
 from advisor.scoring import clamp, weighted_mean
 
+QUALITY_WEIGHTS = {"fundamental": 0.88, "news": 0.12}
+
+HORIZON_BLENDS = (
+    {"max_days": 10, "label": "Up to 10 days", "fundamental": 0.38, "technical": 0.32, "news": 0.30},
+    {"max_days": 60, "label": "Up to 60 days", "fundamental": 0.50, "technical": 0.25, "news": 0.25},
+    {"max_days": 365, "label": "Up to 1 year", "fundamental": 0.62, "technical": 0.16, "news": 0.22},
+    {"max_days": None, "label": "Beyond 1 year", "fundamental": 0.70, "technical": 0.10, "news": 0.20},
+)
+
 
 def _horizon_weights(horizon: int) -> tuple[float, float, float]:
     """Fundamentals dominate investability; technicals matter more near-term."""
-    if horizon <= 10:
-        return 0.38, 0.32, 0.30
-    if horizon <= 60:
-        return 0.50, 0.25, 0.25
-    if horizon <= 365:
-        return 0.62, 0.16, 0.22
-    return 0.70, 0.10, 0.20
+    for row in HORIZON_BLENDS:
+        if row["max_days"] is None or horizon <= row["max_days"]:
+            return row["fundamental"], row["technical"], row["news"]
+    last = HORIZON_BLENDS[-1]
+    return last["fundamental"], last["technical"], last["news"]
 
 
 def _confidence(fundamental: dict, technical: dict, news: dict, horizon: int) -> str:
@@ -33,8 +40,8 @@ def _confidence(fundamental: dict, technical: dict, news: dict, horizon: int) ->
 def combine(fundamental: dict[str, Any], technical: dict[str, Any], news: dict[str, Any], horizon: int) -> dict[str, Any]:
     wf, wt, wn = _horizon_weights(horizon)
     quality = weighted_mean([
-        (fundamental["score"], 0.88),
-        (news["score"], 0.12),
+        (fundamental["score"], QUALITY_WEIGHTS["fundamental"]),
+        (news["score"], QUALITY_WEIGHTS["news"]),
     ]) or 50.0
     timing = technical["score"]
     blended = weighted_mean([

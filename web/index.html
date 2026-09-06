@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/styles.css?v=43" />
+  <link rel="stylesheet" href="/styles.css?v=61" />
 </head>
 <body>
   <header class="top">
@@ -20,7 +20,7 @@
         <a href="#analytics" data-view="diligence" class="is-active">Analytics</a>
         <a href="#dashboard" data-view="dashboard">Dashboard</a>
         <a href="#watchlist" data-view="watchlist">Watchlist</a>
-        <a href="#reports" data-view="reports">Reports</a>
+        <a href="#history" data-view="reports">History</a>
         <a href="#discover" data-view="discover">Discover</a>
         <p class="disclaimer nav-note">Educational research only. Not investment advice.</p>
       </nav>
@@ -114,6 +114,7 @@
           <p class="filing-line" id="filing-line"></p>
           <p class="sources" id="sources"></p>
           <p class="briefing" id="briefing"></p>
+          <p class="muted" id="history-hint">This run is saved to History. Star the name if you want it on Watchlist.</p>
         </div>
         <div class="stamp" id="stamp">
           <p class="stamp-kicker">Combined verdict</p>
@@ -237,7 +238,23 @@
     <section id="view-dashboard" class="app-page" hidden>
       <p class="kicker">Dashboard</p>
       <h2>Your desk</h2>
-      <p class="muted">Favourites, price moves, and news on names you are tracking. Open Watchlist for quotes and charts. Open Analytics only when you want a full diligence run.</p>
+      <p class="muted">Favourites, price moves, and news on names you are tracking. Large swings open as a chart you can step through. Open Watchlist for the full book. Open Analytics only when you want a full diligence run.</p>
+      <article class="app-panel dash-spotlight">
+        <div class="dash-mover-head">
+          <div>
+            <p class="kicker">Price alerts</p>
+            <h3 id="dash-mover-heading">Major moves</h3>
+            <p id="dash-mover-meta" class="muted"></p>
+          </div>
+          <div class="dash-mover-nav" id="dash-mover-nav" hidden>
+            <button type="button" class="ghost dash-mover-btn" id="dash-mover-prev" aria-label="Previous mover">‹</button>
+            <span id="dash-mover-pos" class="muted"></span>
+            <button type="button" class="ghost dash-mover-btn" id="dash-mover-next" aria-label="Next mover">›</button>
+          </div>
+        </div>
+        <div id="dash-moves"></div>
+        <div class="tv-host dash-mover-tv" id="dash-mover-tv" hidden></div>
+      </article>
       <div class="dash-grid">
         <article class="app-panel">
           <p class="kicker">Favourites</p>
@@ -245,16 +262,11 @@
           <div id="dash-favs"></div>
         </article>
         <article class="app-panel">
-          <p class="kicker">Price alerts</p>
-          <h3>Major moves</h3>
-          <div id="dash-moves"></div>
+          <p class="kicker">Recent updates</p>
+          <h3>News on your favourites</h3>
+          <div id="dash-updates"></div>
         </article>
       </div>
-      <article class="app-panel">
-        <p class="kicker">Recent updates</p>
-        <h3>News on your favourites</h3>
-        <div id="dash-updates"></div>
-      </article>
       <div class="dash-grid">
         <article class="app-panel">
           <p class="kicker">Recent Analytics</p>
@@ -262,8 +274,8 @@
           <div id="dash-recent"></div>
         </article>
         <article class="app-panel">
-          <p class="kicker">Recent Reports</p>
-          <h3>Latest saved reports</h3>
+          <p class="kicker">Recent History</p>
+          <h3>Latest saved runs</h3>
           <div id="dash-reports"></div>
         </article>
       </div>
@@ -277,7 +289,7 @@
     <section id="view-watchlist" class="app-page" hidden>
       <p class="kicker">Watchlist</p>
       <h2>Your Watchlist</h2>
-      <p class="muted">Click a company to inspect it here. Use Compare to pick names, then compare quotes, metrics, and charts. Use Analytics only when you want a full diligence run.</p>
+      <p class="muted">Names you are tracking. Quotes and charts. Analytics is optional.</p>
       <form id="watch-search" class="discover-search" autocomplete="off">
         <div class="field company-field">
           <label for="watch-find">Search companies</label>
@@ -301,9 +313,23 @@
           <option value="down">Declining</option>
         </select>
         <select id="watch-sort">
-          <option value="name">Sort: name</option>
-          <option value="score">Sort: score</option>
+          <option value="name">Sort: company</option>
+          <option value="ticker">Sort: ticker</option>
+          <option value="price">Sort: price</option>
+          <option value="day_change_pct">Sort: daily change</option>
+          <option value="market_cap">Sort: market cap</option>
+          <option value="revenue_growth">Sort: rev. growth</option>
+          <option value="earnings_growth">Sort: earn. growth</option>
+          <option value="roe">Sort: ROE</option>
+          <option value="pe">Sort: P/E</option>
+          <option value="score">Sort: Dilagent</option>
+          <option value="label">Sort: verdict</option>
+          <option value="week_return">Sort: trend</option>
           <option value="at">Sort: last analyzed</option>
+        </select>
+        <select id="watch-dir" aria-label="Watchlist sort order">
+          <option value="asc">A–Z</option>
+          <option value="desc">Z–A</option>
         </select>
       </div>
       <div id="watch-manage-bar" class="manage-bar">
@@ -316,18 +342,18 @@
           <thead>
             <tr>
               <th class="manage-only" hidden></th>
-              <th class="watch-company">Company</th>
-              <th class="col-num">Ticker</th>
-              <th class="col-num">Price</th>
-              <th class="col-num">Daily change</th>
-              <th class="col-num">Market cap</th>
-              <th class="col-num">Rev. growth</th>
-              <th class="col-num">Earn. growth</th>
-              <th class="col-num">ROE</th>
-              <th class="col-num">P/E</th>
-              <th class="col-num">Dilagent</th>
-              <th class="watch-verdict">Verdict</th>
-              <th class="col-text">Trend</th>
+              <th class="watch-company"><button type="button" class="th-sort" data-sort="name">Company <span class="th-mark" hidden></span></button></th>
+              <th class="col-num"><button type="button" class="th-sort" data-sort="ticker">Ticker <span class="th-mark" hidden></span></button></th>
+              <th class="col-num"><button type="button" class="th-sort" data-sort="price">Price <span class="th-mark" hidden></span></button></th>
+              <th class="col-num"><button type="button" class="th-sort" data-sort="day_change_pct">Daily change <span class="th-mark" hidden></span></button></th>
+              <th class="col-num"><button type="button" class="th-sort" data-sort="market_cap">Market cap <span class="th-mark" hidden></span></button></th>
+              <th class="col-num"><button type="button" class="th-sort" data-sort="revenue_growth">Rev. growth <span class="th-mark" hidden></span></button></th>
+              <th class="col-num"><button type="button" class="th-sort" data-sort="earnings_growth">Earn. growth <span class="th-mark" hidden></span></button></th>
+              <th class="col-num"><button type="button" class="th-sort" data-sort="roe">ROE <span class="th-mark" hidden></span></button></th>
+              <th class="col-num"><button type="button" class="th-sort" data-sort="pe">P/E <span class="th-mark" hidden></span></button></th>
+              <th class="col-num"><button type="button" class="th-sort" data-sort="score">Dilagent <span class="th-mark" hidden></span></button></th>
+              <th class="watch-verdict"><button type="button" class="th-sort" data-sort="label">Verdict <span class="th-mark" hidden></span></button></th>
+              <th class="col-text"><button type="button" class="th-sort" data-sort="week_return">Trend <span class="th-mark" hidden></span></button></th>
               <th></th>
             </tr>
           </thead>
@@ -337,36 +363,58 @@
     </section>
 
     <section id="view-reports" class="app-page" hidden>
-      <p class="kicker">Reports</p>
+      <p class="kicker">History</p>
       <h2>Research history</h2>
-      <p class="muted">Historical Analytics results only — one stored run per company. Use Compare historical reports for a side-by-side. A company appears here after a completed run — not merely because it is on the Watchlist.</p>
+      <p class="muted">Saved Analytics runs only. One snapshot per company. Compare uses one horizon for every name — Dilagent re-runs a company if its saved window does not match.</p>
       <div class="app-toolbar">
         <div class="field company-field report-search-field">
-          <input id="report-q" type="search" placeholder="Search reports" autocomplete="off" />
+          <input id="report-q" type="search" placeholder="Search saved runs" autocomplete="off" />
           <ul id="report-suggestions" class="suggestions" hidden></ul>
         </div>
         <select id="report-verdict"><option value="">Verdict</option></select>
         <select id="report-sort">
           <option value="at">Sort: date</option>
-          <option value="score">Sort: score</option>
           <option value="name">Sort: company</option>
+          <option value="horizon">Sort: horizon</option>
+          <option value="score">Sort: score</option>
+          <option value="label">Sort: verdict</option>
+          <option value="status">Sort: status</option>
         </select>
-        <button type="button" class="ghost" id="report-compare">Compare</button>
+        <select id="report-dir" aria-label="History sort order">
+          <option value="desc">High to low</option>
+          <option value="asc">Low to high</option>
+        </select>
+        <select id="report-horizon" aria-label="History horizon">
+          <option value="1">Horizon: 1 day</option>
+          <option value="5">Horizon: 1 week</option>
+          <option value="10">Horizon: 2 weeks</option>
+          <option value="30">Horizon: 1 month</option>
+          <option value="60">Horizon: 2 months</option>
+          <option value="90" selected>Horizon: 1 quarter</option>
+          <option value="180">Horizon: 6 months</option>
+          <option value="365">Horizon: 1 year</option>
+          <option value="730">Horizon: 2 years</option>
+          <option value="1095">Horizon: 3 years</option>
+          <option value="1825">Horizon: 5 years</option>
+        </select>
+        <button type="button" class="ghost" id="report-horizon-run">Run this horizon</button>
+        <button type="button" class="ghost" id="report-compare">Compare saved runs</button>
         <button type="button" class="ghost" id="report-remove-btn">Remove</button>
         <button type="button" class="ghost" id="report-manage-cancel" hidden>Cancel</button>
       </div>
+      <p id="history-run-status" class="muted" hidden></p>
       <div id="compare-box" class="compare-box" hidden></div>
       <div class="table-wrap">
         <table class="wide data-table" id="report-table">
           <thead>
             <tr>
               <th class="manage-only" hidden></th>
-              <th class="report-company">Company</th>
-              <th class="col-num">Score</th>
-              <th class="watch-verdict">Verdict</th>
-              <th class="col-text">Horizon</th>
-              <th class="col-text">Date</th>
-              <th class="col-text">Status</th>
+              <th class="report-company"><button type="button" class="th-sort" data-sort="name">Company <span class="th-mark" hidden></span></button></th>
+              <th class="col-text"><button type="button" class="th-sort" data-sort="at">Date <span class="th-mark" hidden></span></button></th>
+              <th class="col-text"><button type="button" class="th-sort" data-sort="horizon">Horizon <span class="th-mark" hidden></span></button></th>
+              <th class="col-num"><button type="button" class="th-sort" data-sort="score">Score <span class="th-mark" hidden></span></button></th>
+              <th class="watch-verdict"><button type="button" class="th-sort" data-sort="label">Verdict <span class="th-mark" hidden></span></button></th>
+              <th class="col-text"><button type="button" class="th-sort" data-sort="status">Status <span class="th-mark" hidden></span></button></th>
             </tr>
           </thead>
           <tbody id="report-body"></tbody>
@@ -389,17 +437,6 @@
           <button type="button" class="ghost" id="discover-reset">Reset</button>
         </div>
       </form>
-      <div class="preset-row" id="discover-presets">
-        <button type="button" class="ghost" data-preset="fundamentals">Strong Fundamentals</button>
-        <button type="button" class="ghost" data-preset="growth">High Growth</button>
-        <button type="button" class="ghost" data-preset="earnings">Improving Earnings</button>
-        <button type="button" class="ghost" data-preset="profit">Profitable Companies</button>
-        <button type="button" class="ghost" data-preset="lowdebt">Low Debt</button>
-        <button type="button" class="ghost" data-preset="fcf">Strong Free Cash Flow</button>
-        <button type="button" class="ghost" data-preset="value">Value Candidates</button>
-        <button type="button" class="ghost" data-preset="score">High Dilagent Score</button>
-        <button type="button" class="ghost" data-preset="improving">Improving Dilagent Score</button>
-      </div>
       <details class="filter-box" open>
         <summary>Filters</summary>
         <p class="filter-lead muted">Screen this result set. Country, exchange, sector, and industry are dropdowns and include the full published lists, not just the current page. Selected values are combined with OR. Numerical filters accept a preset or a custom minimum and/or maximum.</p>
@@ -413,13 +450,18 @@
       </details>
       <div class="discover-results-bar">
         <div class="discover-results-meta">
-          <p class="result-count" id="discover-count">Search or apply a preset to see published matches.</p>
+          <p class="result-count" id="discover-count">Search to see published matches.</p>
           <div class="filter-chips" id="filter-chips" hidden></div>
         </div>
         <div class="discover-sort">
+          <button type="button" class="ghost" id="discover-favs-only" aria-pressed="false">Favourites only</button>
           <label>Sort by
             <select id="discover-sort">
               <option value="">Relevance</option>
+              <option value="name">Company name</option>
+              <option value="exchange">Market</option>
+              <option value="sector">Sector</option>
+              <option value="industry">Industry</option>
               <option value="score">Dilagent score</option>
               <option value="market_cap">Market cap</option>
               <option value="revenue_growth">Revenue growth</option>
@@ -434,7 +476,6 @@
               <option value="debt_to_equity">Debt / Equity</option>
               <option value="free_cashflow">Free cash flow</option>
               <option value="price">Price</option>
-              <option value="name">Company name</option>
             </select>
           </label>
           <label>Order
@@ -449,56 +490,52 @@
         <table class="wide data-table" id="discover-table">
           <thead>
             <tr>
-              <th></th>
-              <th class="discover-company">Company</th>
-              <th class="col-text">Market</th>
-              <th class="col-text">Sector</th>
-              <th class="col-text">Industry</th>
-              <th class="col-num">Market cap</th>
-              <th class="col-num">Revenue growth</th>
-              <th class="col-num">Earnings growth</th>
-              <th class="col-num">ROE</th>
-              <th class="col-num">P/E</th>
-              <th class="col-num">Dilagent score</th>
+              <th class="discover-star"></th>
+              <th class="discover-company"><button type="button" class="th-sort" data-sort="name">Company <span class="th-mark" hidden></span></button></th>
+              <th class="col-text"><button type="button" class="th-sort" data-sort="exchange">Market <span class="th-mark" hidden></span></button></th>
+              <th class="col-text"><button type="button" class="th-sort" data-sort="sector">Sector <span class="th-mark" hidden></span></button></th>
+              <th class="col-text"><button type="button" class="th-sort" data-sort="industry">Industry <span class="th-mark" hidden></span></button></th>
+              <th class="col-num"><button type="button" class="th-sort" data-sort="market_cap">Market cap <span class="th-mark" hidden></span></button></th>
+              <th class="col-num"><button type="button" class="th-sort" data-sort="revenue_growth">Revenue growth <span class="th-mark" hidden></span></button></th>
+              <th class="col-num"><button type="button" class="th-sort" data-sort="earnings_growth">Earnings growth <span class="th-mark" hidden></span></button></th>
+              <th class="col-num"><button type="button" class="th-sort" data-sort="roe">ROE <span class="th-mark" hidden></span></button></th>
+              <th class="col-num"><button type="button" class="th-sort" data-sort="pe">P/E <span class="th-mark" hidden></span></button></th>
+              <th class="col-num"><button type="button" class="th-sort" data-sort="score">Dilagent score <span class="th-mark" hidden></span></button></th>
               <th></th>
             </tr>
           </thead>
           <tbody id="discover-body"></tbody>
         </table>
       </div>
+      <nav id="discover-pager" class="discover-pager" hidden aria-label="Discover pages"></nav>
     </section>
 
     <section id="view-method" class="app-page method-page" hidden>
       <p class="kicker">Secondary</p>
       <h2>Methodology &amp; sources</h2>
-      <p class="muted">How Dilagent actually works in this codebase — not a marketing description.</p>
+      <p class="muted" id="method-updated">How Dilagent actually works in this codebase — weights, feeds, and markets are read from the running process, not a brochure.</p>
 
       <article class="app-panel">
         <p class="kicker">How Dilagent works</p>
         <h3>Three pillars, then a combined verdict</h3>
         <p>Analytics scores a company on three separate passes, then combines them. The percentages are confidence in each pillar under Dilagent’s rules, not a predicted return.</p>
         <ul class="own-look-list">
-          <li><strong>Fundamentals</strong> — published ratios and statements from Yahoo Finance, plus optional notes pulled from an SEC 10-K/10-Q or an uploaded PDF.</li>
+          <li><strong>Fundamentals</strong> — published ratios and statements from <a href="https://finance.yahoo.com/" target="_blank" rel="noopener">Yahoo Finance</a>, plus optional notes pulled from an <a href="https://www.sec.gov/edgar" target="_blank" rel="noopener">SEC 10-K/10-Q</a> or an uploaded PDF.</li>
           <li><strong>Technicals</strong> — price-history measures (RSI, MACD, SMA 20/50/200, ATR, 52-week range) computed from Yahoo daily history. Used as entry timing, not business quality.</li>
           <li><strong>News / external</strong> — Yahoo ticker news plus RSS headlines, scanned for controversy keywords. This is a language screen, not a full legal review.</li>
         </ul>
-        <p>A <strong>quality</strong> score is 88% fundamentals and 12% news. A <strong>timing</strong> score is the technical score alone. The headline Dilagent score is a weighted blend of all three pillars. Horizon changes the blend; it does not forecast a future price.</p>
+        <p id="method-quality">A quality score blends fundamentals and news. A timing score is the technical score alone. The headline Dilagent score is a weighted blend of all three pillars. Horizon changes the blend; it does not forecast a future price.</p>
       </article>
 
       <article class="app-panel">
         <p class="kicker">How confidence scores are calculated</p>
         <h3>The weights this app actually uses</h3>
-        <p>Combined score = weighted mean of the three pillar scores:</p>
+        <p>Combined score = weighted mean of the three pillar scores. The table is filled from the live Dilagent process.</p>
         <table class="wide">
           <thead><tr><th>Horizon</th><th>Fundamentals</th><th>Technicals</th><th>News</th></tr></thead>
-          <tbody>
-            <tr><td>Up to 10 days</td><td>38%</td><td>32%</td><td>30%</td></tr>
-            <tr><td>Up to 60 days</td><td>50%</td><td>25%</td><td>25%</td></tr>
-            <tr><td>Up to 1 year</td><td>62%</td><td>16%</td><td>22%</td></tr>
-            <tr><td>Beyond 1 year</td><td>70%</td><td>10%</td><td>20%</td></tr>
-          </tbody>
+          <tbody id="method-blends"></tbody>
         </table>
-        <p>Fundamentals themselves are a weighted mean of: profitability 28%, growth 20%, balance sheet 20%, cash 14%, valuation 12%, and optional filing notes 6%. Each sub-score is a banded mapping of published ratios (for example ROE, margins, revenue growth, debt/equity, P/E), not a neural net.</p>
+        <p id="method-fund-weights">Fundamentals themselves are a weighted mean of published-ratio bands, not a neural net.</p>
         <p>Confidence (Low / Medium / High) is a coverage check: whether fundamentals, a 200-day average, and headlines all arrived, how far the pillars disagree, and whether news controversy is severe. It is not a probability of profit.</p>
         <p>Verdict labels (Investable, Cautious, Not investable) are rule thresholds on quality, timing, and headline vetoes — for example a keyword hit for bankruptcy or fraud can force “Not investable” regardless of the numeric blend.</p>
       </article>
@@ -506,26 +543,29 @@
       <article class="app-panel">
         <p class="kicker">Language model</p>
         <h3>What an LLM does and does not do</h3>
-        <p>If a Groq or OpenAI key is present, Dilagent may ask <strong>llama-3.3-70b-versatile</strong> (Groq) or <strong>gpt-4o-mini</strong> (OpenAI) to write the short briefing paragraph only. The model receives the already-computed scores, ratings, and highlights. It does not set pillar scores, does not choose the verdict, and does not invent numbers. If no key is configured, Dilagent writes a template briefing from those same scores. Discover, Watchlist, and the numeric cards never call the model.</p>
+        <p id="method-llm">If a Groq or OpenAI key is present, Dilagent may ask a model to write the short briefing paragraph only. The model receives the already-computed scores, ratings, and highlights. It does not set pillar scores, does not choose the verdict, and does not invent numbers. If no key is configured, Dilagent writes a template briefing from those same scores. Discover, Watchlist, and the numeric cards never call the model.</p>
+      </article>
+
+      <article class="app-panel">
+        <p class="kicker">Markets</p>
+        <h3>Venues Dilagent can access</h3>
+        <p id="method-coverage">US names come from the SEC company list. Indian cash equities come from the official NSE list. Other venues are reached through Yahoo Finance listed quotes. Dilagent does not invent a listing that those sources do not publish.</p>
+        <div class="method-markets" id="method-markets"></div>
       </article>
 
       <article class="app-panel">
         <p class="kicker">Data sources</p>
         <h3>Where the numbers come from</h3>
-        <ul class="own-look-list">
-          <li><strong>SEC EDGAR</strong> — company tickers and 10-K / 10-Q HTML when a CIK exists.</li>
-          <li><strong>Yahoo Finance</strong> (via yfinance) — prices, statements, and the published ratios used in fundamentals and Discover.</li>
-          <li><strong>NSE EQUITY_L.csv</strong> — official NSE equity list for Indian names, mapped to Yahoo <code>.NS</code> tickers.</li>
-          <li><strong>News RSS</strong> — Financial Times, Reuters Business, CNBC, MarketWatch, BBC Business, Yahoo Finance, plus Google News and Yahoo ticker stories.</li>
-          <li><strong>Your PDF</strong> — an uploaded annual report is indexed locally and can add filing notes to the fundamental score.</li>
-        </ul>
+        <ul class="own-look-list" id="method-sources"></ul>
+        <p class="kicker">News outlets</p>
+        <div class="method-news" id="method-news"></div>
         <p>Discover screens only Yahoo profile fields Dilagent has actually fetched. Dilagent scores appear on Discover and Watchlist only after an Analytics run in this browser. Fields Dilagent does not store (for example RSI on the Discover screen, or ROCE without a statements pull) show as not available rather than an estimate.</p>
       </article>
 
       <article class="app-panel">
         <p class="kicker">Limitations</p>
         <h3>What this tool cannot promise</h3>
-        <ul class="own-look-list">
+        <ul class="method-bullets">
           <li>Feeds can be delayed, incomplete, or wrong.</li>
           <li>Company facts change after the last pull.</li>
           <li>Headline keyword tags can misread context.</li>
@@ -560,8 +600,8 @@
       </div>
     </aside>
   </div>
-  <script src="/tape.js?v=43"></script>
-  <script src="/app.js?v=43"></script>
-  <script src="/desk.js?v=43"></script>
+  <script src="/tape.js?v=49"></script>
+  <script src="/app.js?v=56"></script>
+  <script src="/desk.js?v=62"></script>
 </body>
 </html>

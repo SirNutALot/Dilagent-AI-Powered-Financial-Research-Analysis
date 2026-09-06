@@ -18,6 +18,7 @@ FEATURED_TICKERS = (
     "AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA",
     "JPM", "JNJ", "XOM", "BRK-B", "V", "UNH", "WMT", "PG", "COST",
 )
+SEC_TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
 SEC_HEADERS = {
     "User-Agent": SEC_USER_AGENT,
     "Accept-Encoding": "gzip, deflate",
@@ -38,7 +39,7 @@ def _edgar_tickers() -> list[dict[str, Any]]:
         return _TICKERS
     try:
         with _client() as client:
-            response = client.get("https://www.sec.gov/files/company_tickers.json")
+            response = client.get(SEC_TICKERS_URL)
             response.raise_for_status()
             rows = list(response.json().values())
         cache.write_text(json.dumps(rows), encoding="utf-8")
@@ -134,6 +135,22 @@ def warm_filers() -> None:
         except Exception:
             pass
     threading.Thread(target=_run, daemon=True).start()
+
+
+def all_filers() -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for row in _edgar_tickers():
+        ticker = str(row.get("ticker") or "").upper()
+        name = str(row.get("title") or "").strip()
+        if not ticker or not name:
+            continue
+        cik_raw = str(row.get("cik_str") or "").strip()
+        rows.append({
+            "ticker": ticker,
+            "name": name,
+            "cik": cik_raw.zfill(10) if cik_raw else "",
+        })
+    return rows
 
 
 def list_filers(query: str, limit: int = 40, offset: int = 0) -> dict[str, Any]:

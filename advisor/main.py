@@ -10,6 +10,7 @@ from advisor.config import APP_NAME, HORIZONS, WEB_DIR
 from advisor.catalog import remember_company
 from advisor.discover import discover, similar_companies, snapshot, sparks
 from advisor.filings import list_filers, mark_uploaded_report, warm_filers
+from advisor.methodology import methodology
 from advisor.news import favourite_updates, market_desk, warm_desk
 from advisor.rag import has_filing, save_filing
 from advisor.resolve import resolve_company, search_listed
@@ -36,6 +37,11 @@ def prime_desk() -> None:
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "name": APP_NAME}
+
+
+@app.get("/api/methodology")
+def api_methodology() -> dict:
+    return methodology()
 
 
 def _query(q: str | None, ticker: str | None) -> str:
@@ -105,11 +111,12 @@ def api_spark(
 @app.get("/api/discover")
 def api_discover(
     q: str = Query(default="", max_length=80),
-    tickers: str = Query(default="", max_length=400),
+    tickers: str = Query(default="", max_length=2500),
     similar: str = Query(default="", max_length=80),
+    full: bool = Query(False),
 ) -> dict:
     extra = [part.strip() for part in tickers.split(",") if part.strip()]
-    return discover(q, extra=extra, similar=similar)
+    return discover(q, extra=extra, similar=similar, full=full)
 
 
 @app.get("/api/analyze")

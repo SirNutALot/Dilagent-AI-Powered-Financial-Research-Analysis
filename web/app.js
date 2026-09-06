@@ -812,6 +812,7 @@ const VIEWS = ["diligence", "dashboard", "watchlist", "reports", "discover", "me
 
 function normalizeView(view) {
   if (view === "analytics") return "diligence";
+  if (view === "history") return "reports";
   return view;
 }
 
@@ -827,7 +828,7 @@ function writeDesk(next) {
   localStorage.setItem(DESK_STORE, JSON.stringify(next));
 }
 
-function rememberRun(data) {
+function rememberRun(data, extras) {
   const company = data.company || {};
   const verdict = data.verdict || {};
   if (!company.ticker && !company.name) return;
@@ -836,10 +837,11 @@ function rememberRun(data) {
   const previous = (state.reports || []).find((item) => item.ticker === ticker);
   const fund = data.fundamental?.metrics || {};
   const tech = data.technical?.indicators || {};
+  const listed = extras && extras.listed != null ? extras.listed : listedInput.value === "1";
   const row = {
     ticker,
     name: company.name || ticker,
-    listed: listedInput.value === "1",
+    listed,
     sector: company.sector || "",
     industry: company.industry || "",
     exchange: company.exchange || "",
@@ -892,32 +894,14 @@ function rememberRun(data) {
         ? { ...item, name: row.name, cik: company.cik || item.cik, sector: row.sector, industry: row.industry, exchange: row.exchange }
         : item
     ))
-    : [{
-        ticker,
-        name: row.name,
-        listed: row.listed,
-        cik: company.cik || "",
-        sector: row.sector,
-        industry: row.industry,
-        exchange: row.exchange,
-        addedAt: row.at,
-      }, ...(state.watch || [])];
+    : (state.watch || []);
   const events = [...(state.events || [])];
-  if (!exists) {
-    events.unshift({
-      type: "watch",
-      ticker,
-      name: row.name,
-      text: `${row.name} added to Watchlist after Analytics`,
-      at: row.at,
-    });
-  }
   if (!isRepeat) {
     events.unshift({
       type: "report",
       ticker,
       name: row.name,
-      text: `New report generated for ${row.name}: ${row.label || "unscored"} · ${row.score != null ? `${Math.round(row.score)}%` : "—"}`,
+      text: `Saved Analytics run for ${row.name}: ${row.label || "unscored"} · ${row.score != null ? `${Math.round(row.score)}%` : "—"}`,
       at: row.at,
     });
   }
@@ -974,7 +958,7 @@ function setView(view) {
   if (window.Desk) window.Desk.paint(next);
   if (next !== "diligence") window.scrollTo({ top: 0, behavior: "smooth" });
   closeNav();
-  const hash = next === "diligence" ? "analytics" : next;
+  const hash = next === "diligence" ? "analytics" : next === "reports" ? "history" : next;
   if (location.hash !== `#${hash}`) history.replaceState(null, "", `#${hash}`);
 }
 
@@ -1116,6 +1100,7 @@ window.setView = setView;
 window.openDiligence = openDiligence;
 window.attachCompanySearch = attachCompanySearch;
 window.paintResultStar = paintResultStar;
+window.rememberRun = rememberRun;
 
 window.addEventListener("hashchange", () => {
   const view = normalizeView((location.hash || "#analytics").replace("#", ""));

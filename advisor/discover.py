@@ -8,7 +8,8 @@ from typing import Any
 import yfinance as yf
 
 from advisor.config import CACHE_DIR, EDGAR_CACHE_TTL, MARKET_CACHE_TTL
-from advisor.filings import FEATURED_TICKERS, search_filers
+from advisor.catalog import load_custom
+from advisor.filings import FEATURED_TICKERS, all_filers, list_filers, search_filers
 from advisor.resolve import search_listed
 from advisor.scoring import safe_float
 
@@ -472,42 +473,124 @@ def _search_tickers(query: str) -> list[str]:
 
 
 def cached_universe() -> list[str]:
-    names: list[str] = []
-    if _PROFILE_DIR.exists():
-        cutoff = time.time() - EDGAR_CACHE_TTL
-        for path in _PROFILE_DIR.glob("*.json"):
-            if path.stat().st_mtime < cutoff:
-                continue
-            try:
-                row = json.loads(path.read_text(encoding="utf-8"))
-            except Exception:
-                continue
-            if row.get("ticker"):
-                names.append(row["ticker"])
-    return names
+    return [row["ticker"] for row in all_cached_profiles()]
 
 
-def discover(
-    query: str = "",
-    *,
-    extra: list[str] | None = None,
-    similar: str = "",
-    limit: int = 40,
-) -> dict[str, Any]:
-    tickers: list[str] = []
-    if similar:
-        seed = snapshot(similar) or snapshot(query)
-        related = similar_tickers(similar or query, seed)
-        tickers.extend(related)
-    if query:
-        tickers.extend(_search_tickers(query))
-        if query.upper() not in {item.upper() for item in tickers}:
-            tickers.insert(0, query)
-    tickers.extend(extra or [])
-    if not query and not similar:
-        tickers.extend(SEED_TICKERS)
-        tickers.extend(cached_universe())
-    rows = hydrate(tickers, limit=limit)
+def all_cached_profiles() -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    if not _PROFILE_DIR.exists():
+        return rows
+    for path in _PROFILE_DIR.glob("*.json"):
+        if ".spark" in path.name.lower():
+            continue
+        try:
+            row = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        ticker = str(row.get("ticker") or "").upper()
+        if not ticker or ticker in seen or not row.get("name"):
+            continue
+        seen.add(ticker)
+        rows.append(row)
+    rows.sort(key=lambda item: str(item.get("name") or item.get("ticker") or "").lower())
+    return rows
+
+
+def _slim_company(row: dict[str, Any]) -> dict[str, Any]:
+    ticker = str(row.get("ticker") or "").upper()
+    cik_raw = str(row.get("cik") or "").strip()
+    return {
+        "ticker": ticker,
+        "name": str(row.get("name") or ticker).strip(),
+        "cik": cik_raw.zfill(10) if cik_raw else "",
+    }
+
+
+def _sort_companies(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(rows, key=lambda item: str(item.get("name") or item.get("ticker") or "").lower())
+
+
+def _profile_index() -> dict[str, dict[str, Any]]:
+    return {str(row.get("ticker") or "").upper(): row for row in all_cached_profiles()}
+
+
+def _merge_company(by_ticker: dict[str, dict[str, Any]], row: dict[str, Any]) -> None:
+    ticker = str(row.get("ticker") or "").upper()
+    if not ticker:
+        return
+    current = by_ticker.get(ticker)
+    if current and (current.get("sector") or current.get("market_cap") is not None):
+        return
+    if row.get("name") and (row.get("sector") or row.get("market_cap") is not None):
+        by_ticker[ticker] = row
+        return
+    if not current:
+        by_ticker[ticker] = row if row.get("name") else _slim_company(row)
+
+
+def browse_universe() -> list[dict[str, Any]]:
+    by_ticker: dict[str, dict[str, Any]] = {}
+    for row in all_filers():
+        _merge_company(by_ticker, row)
+    for row in load_custom():
+        _merge_company(by_ticker, _slim_company(row))
+    for row in all_cached_profiles():
+        by_ticker[str(row.get("ticker") or "").upper()] = row
+    return _sort_companies(list(by_ticker.values()))
+
+
+def search_universe(query: str) -> list[dict[str, Any]]:
+    raw = (query or "").strip()
+    by_ticker: dict[str, dict[str, Any]] = {}
+    profiles = _profile_index()
+    if raw:
+        try:
+            for row in list_filers(raw, limit=20000, offset=0).get("results") or []:
+                ticker = str(row.get("ticker") or "").upper()
+                if ticker:
+                    by_ticker[ticker] = profiles.get(ticker) or _slim_company(row)
+        except Exception:
+            pass
+        try:
+            for row in search_listed(raw, limit=40):
+                ticker = str(row.get("ticker") or "").upper()
+                if ticker and ticker not in by_ticker:
+                    by_ticker[ticker] = profiles.get(ticker) or _slim_company(row)
+        except Exception:
+            pass
+    needle = raw.lower()
+    if len(needle) >= 2:
+        for row in profiles.values():
+            ticker = str(row.get("ticker") or "").upper()
+            if ticker in by_ticker:
+                by_ticker[ticker] = row
+                continue
+            if needle in _profile_blob(row):
+                by_ticker[ticker] = row
+    return _sort_companies(list(by_ticker.values()))
+
+
+def _overlay_hydrated(rows: list[dict[str, Any]], tickers: list[str]) -> list[dict[str, Any]]:
+    wanted = [str(name or "").upper() for name in tickers if name]
+    if not wanted:
+        return rows
+    rich = {str(row.get("ticker") or "").upper(): row for row in hydrate(wanted, limit=len(wanted))}
+    if not rich:
+        return rows
+    seen: set[str] = set()
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        ticker = str(row.get("ticker") or "").upper()
+        out.append(rich.get(ticker, row))
+        seen.add(ticker)
+    for ticker, row in rich.items():
+        if ticker not in seen:
+            out.append(row)
+    return _sort_companies(out)
+
+
+def _discover_payload(rows: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "results": rows,
         "count": len(rows),
@@ -516,6 +599,29 @@ def discover(
             "Dilagent scores appear after an Analytics run."
         ),
     }
+
+
+def discover(
+    query: str = "",
+    *,
+    extra: list[str] | None = None,
+    similar: str = "",
+    limit: int = 40,
+    full: bool = False,
+) -> dict[str, Any]:
+    extras = extra or []
+    if not query and not similar and not full:
+        rows = hydrate(extras, limit=max(len(extras), 1)) if extras else []
+        return _discover_payload(rows)
+    if similar:
+        seed = snapshot(similar) or snapshot(query)
+        tickers = similar_tickers(similar or query, seed)
+        tickers.extend(extras)
+        rows = hydrate(tickers, limit=max(limit, 80))
+        return _discover_payload(_overlay_hydrated(rows, extras))
+    if query:
+        return _discover_payload(_overlay_hydrated(search_universe(query), extras))
+    return _discover_payload(browse_universe())
 
 
 def similar_tickers(query: str, seed: dict[str, Any] | None = None) -> list[str]:

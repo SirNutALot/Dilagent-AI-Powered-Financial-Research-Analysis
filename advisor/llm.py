@@ -7,6 +7,9 @@ import httpx
 
 from advisor.config import groq_key, openai_key
 
+GROQ_MODEL = "llama-3.3-70b-versatile"
+OPENAI_MODEL = "gpt-4o-mini"
+
 
 def _chat(url: str, key: str, model: str, system: str, user: str) -> str | None:
     try:
@@ -71,7 +74,7 @@ def narrate(payload: dict[str, Any]) -> str | None:
         text = _chat(
             "https://api.groq.com/openai/v1/chat/completions",
             key,
-            "llama-3.3-70b-versatile",
+            GROQ_MODEL,
             system,
             user,
         )
@@ -83,7 +86,7 @@ def narrate(payload: dict[str, Any]) -> str | None:
         return _chat(
             "https://api.openai.com/v1/chat/completions",
             key,
-            "gpt-4o-mini",
+            OPENAI_MODEL,
             system,
             user,
         )

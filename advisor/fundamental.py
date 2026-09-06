@@ -6,6 +6,15 @@ import pandas as pd
 
 from advisor.scoring import band_score, inverse_band_score, num, pct, safe_float, weighted_mean
 
+FUNDAMENTAL_WEIGHTS = {
+    "profitability": 0.28,
+    "growth": 0.20,
+    "balance_sheet": 0.20,
+    "cash": 0.14,
+    "valuation": 0.12,
+    "filing_notes": 0.06,
+}
+
 
 def _latest_statement_value(frame: pd.DataFrame | None, row_names: list[str]) -> float | None:
     if frame is None or getattr(frame, "empty", True):
@@ -401,12 +410,12 @@ def analyze_fundamentals(company: dict[str, Any], rag_notes: dict[str, Any] | No
         rag_score = float(rag_notes["score"])
 
     score = weighted_mean([
-        (components["profitability"], 0.28),
-        (components["growth"], 0.20),
-        (components["balance_sheet"], 0.20),
-        (components["cash"], 0.14),
-        (components["valuation"], 0.12),
-        (rag_score, 0.06),
+        (components["profitability"], FUNDAMENTAL_WEIGHTS["profitability"]),
+        (components["growth"], FUNDAMENTAL_WEIGHTS["growth"]),
+        (components["balance_sheet"], FUNDAMENTAL_WEIGHTS["balance_sheet"]),
+        (components["cash"], FUNDAMENTAL_WEIGHTS["cash"]),
+        (components["valuation"], FUNDAMENTAL_WEIGHTS["valuation"]),
+        (rag_score, FUNDAMENTAL_WEIGHTS["filing_notes"]),
     ])
     if score is None:
         score = 50.0
