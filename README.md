@@ -1,5 +1,7 @@
 # Dilagent
 
+**v1.6** (broken comparison logic)
+
 A due-diligence desk that answers one question: **is this company investable?**
 
 Type a company name. SEC filers appear automatically. Names that are not there — TCS and other non-US listings — can be added from “Company not listed?” using the Yahoo symbol and an optional PDF.
