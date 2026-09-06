@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
@@ -241,13 +242,15 @@ def _rss(url: str, source: str, max_items: int = 30) -> list[dict[str, Any]]:
         summary = re.sub("<[^<]+?>", "", _text(_child(item, "description", "summary", "content")))
         pub_el = _child(item, "pubDate", "updated", "published", "date")
         pub = _text(pub_el)
+        source_el = _child(item, "source")
+        publisher = _text(source_el)
         if not title:
             continue
         items.append({
             "title": title,
             "url": (link or "").strip(),
             "summary": summary[:320],
-            "source": source,
+            "source": publisher or source,
             "published": _parse_date(pub),
             "image": _item_image(item),
             "_ts": _pub_ts(pub),
@@ -297,8 +300,32 @@ def _yahoo_news(handle: Any) -> list[dict[str, Any]]:
                 "summary": (summary or "")[:320],
                 "source": provider,
                 "published": published,
+                "image": _yahoo_image(item, content if isinstance(content, dict) else None),
             })
     return articles
+
+
+def _yahoo_image(item: dict[str, Any], content: dict[str, Any] | None) -> str | None:
+    blobs: list[dict[str, Any]] = []
+    if isinstance(content, dict):
+        thumb = content.get("thumbnail")
+        if isinstance(thumb, dict):
+            blobs.append(thumb)
+    thumb = item.get("thumbnail")
+    if isinstance(thumb, dict):
+        blobs.append(thumb)
+    for thumb in blobs:
+        for key in ("originalUrl", "url"):
+            url = thumb.get(key)
+            if isinstance(url, str) and url.startswith("http"):
+                return url
+        resolutions = thumb.get("resolutions") or []
+        if resolutions:
+            best = max(resolutions, key=lambda row: row.get("width") or 0)
+            url = best.get("url") if isinstance(best, dict) else None
+            if isinstance(url, str) and url.startswith("http"):
+                return url
+    return None
 
 
 def analyze_news(ticker: str, name: str, handle: Any | None = None) -> dict[str, Any]:
@@ -440,8 +467,11 @@ def analyze_news(ticker: str, name: str, handle: Any | None = None) -> dict[str,
     return result
 
 
-_DESK_CACHE_V = 5
-_MARKET: tuple[float, dict[str, list[dict[str, Any]]]] | None = None
+_DESK_CACHE_V = 8
+_MARKET: tuple[float, dict[str, Any]] | None = None
+_DESK_LOCK = threading.Lock()
+_DESK_REFRESHING = False
+DESK_LIMIT = 20
 
 DESK_FEEDS = (
     ("Yahoo Finance", "https://finance.yahoo.com/news/rssindex", "tape"),
@@ -456,6 +486,8 @@ DESK_FEEDS = (
     ("Financial Times", "https://www.ft.com/companies?format=rss", "headlines"),
     ("BBC Business", "https://feeds.bbci.co.uk/news/business/rss.xml", "headlines"),
     ("CNBC", "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=20910258", "headlines"),
+    ("Yahoo Finance", "https://finance.yahoo.com/news/rssindex", "headlines"),
+    ("MarketWatch", "https://feeds.marketwatch.com/marketwatch/topstories/", "headlines"),
     ("Google News", "https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=en-US&gl=US&ceid=US:en", "headlines"),
     ("Google News", "https://news.google.com/rss/search?q=stock+market+OR+nasdaq+OR+earnings+OR+merger&hl=en-US&gl=US&ceid=US:en", "tape"),
 )
@@ -511,6 +543,16 @@ def _norm_title(title: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def _near_title(norm: str, other: str) -> bool:
+    prefix = " ".join(norm.split()[:8])
+    return (
+        norm[:48] == other[:48]
+        or prefix == " ".join(other.split()[:8])
+        or norm.startswith(other[:40])
+        or other.startswith(norm[:40])
+    )
+
+
 def _desk_dedupe(articles: list[dict[str, Any]]) -> list[dict[str, Any]]:
     unique: list[dict[str, Any]] = []
     seen: list[str] = []
@@ -518,8 +560,13 @@ def _desk_dedupe(articles: list[dict[str, Any]]) -> list[dict[str, Any]]:
         norm = _norm_title(item.get("title") or "")
         if len(norm) < 12:
             continue
-        prefix = " ".join(norm.split()[:8])
-        if any(norm[:48] == other[:48] or prefix == " ".join(other.split()[:8]) or norm.startswith(other[:40]) or other.startswith(norm[:40]) for other in seen):
+        hit = next((index for index, other in enumerate(seen) if _near_title(norm, other)), None)
+        if hit is not None:
+            kept = unique[hit]
+            if not kept.get("image") and item.get("image"):
+                kept["image"] = item["image"]
+            if (kept.get("source") or "") == "Google News" and item.get("source") and item.get("source") != "Google News":
+                kept["source"] = item["source"]
             continue
         seen.append(norm)
         unique.append(item)
@@ -548,27 +595,70 @@ def _lane(item: dict[str, Any], source_lane: str) -> str:
     return "tape" if tape >= head else "headlines"
 
 
+def _display_source(title: str, source: str) -> str:
+    if (source or "") == "Google News":
+        parts = re.split(r"\s+[-–—]\s+", title or "")
+        if len(parts) >= 2 and 1 < len(parts[-1]) < 42:
+            return parts[-1].strip()
+    return source
+
+
+def _display_title(title: str, source: str) -> str:
+    parts = re.split(r"\s+[-–—]\s+", title or "")
+    if len(parts) >= 2 and 1 < len(parts[-1]) < 42:
+        tail = parts[-1].strip()
+        if (source or "") in {"Google News", tail} or tail.lower() == (source or "").lower():
+            return " — ".join(parts[:-1]).strip()
+    return title
+
+
+_OG_CACHE: dict[str, str | None] = {}
+
+
+def _og_image(url: str) -> str | None:
+    if not url:
+        return None
+    if url in _OG_CACHE:
+        return _OG_CACHE[url]
+    try:
+        with httpx.Client(timeout=3.0, headers={"User-Agent": USER_AGENT}, follow_redirects=True) as client:
+            response = client.get(url)
+            response.raise_for_status()
+        text = response.text[:80_000]
+        match = re.search(
+            r'<meta[^>]+(?:property|name)=["\'](?:og:image(?::secure_url)?|twitter:image(?::src)?)["\'][^>]+content=["\']([^"\']+)',
+            text,
+            re.I,
+        ) or re.search(
+            r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+(?:property|name)=["\'](?:og:image|twitter:image)',
+            text,
+            re.I,
+        )
+        image = match.group(1).strip() if match else None
+        if image and image.startswith("//"):
+            image = "https:" + image
+        if image and not image.startswith("http"):
+            image = None
+        _OG_CACHE[url] = image
+        return image
+    except Exception:
+        _OG_CACHE[url] = None
+        return None
+
+
 def _slim_article(item: dict[str, Any]) -> dict[str, Any]:
+    title = item.get("title") or ""
+    source = item.get("source") or ""
     return {
-        "title": item.get("title"),
+        "title": _display_title(title, source),
         "url": item.get("url"),
-        "source": item.get("source"),
+        "source": _display_source(title, source),
         "published": item.get("published"),
         "image": item.get("image"),
     }
 
 
-def market_desk(limit: int = 20) -> dict[str, list[dict[str, Any]]]:
-    global _MARKET
-    now = time.time()
-    if _MARKET and now - _MARKET[0] < NEWS_CACHE_TTL and _MARKET[1].get("_v") == _DESK_CACHE_V:
-        cached = _MARKET[1]
-        return {
-            "tape": cached["tape"][:limit],
-            "headlines": cached["headlines"][:limit],
-            "results": (cached["tape"] + cached["headlines"])[: limit * 2],
-        }
-
+def _build_desk(limit: int = 20, enrich: bool = True) -> dict[str, Any]:
     tagged: list[tuple[str, dict[str, Any]]] = []
     with ThreadPoolExecutor(max_workers=10) as pool:
         futures = {
@@ -588,27 +678,172 @@ def market_desk(limit: int = 20) -> dict[str, list[dict[str, Any]]]:
     chosen = _desk_dedupe([item for _, item in usable])
     lane_of = {id(item): lane for lane, item in usable}
 
-    tape: list[dict[str, Any]] = []
-    headlines: list[dict[str, Any]] = []
+    tape_rows: list[dict[str, Any]] = []
+    head_rows: list[dict[str, Any]] = []
     for item in chosen:
         dest = _lane(item, lane_of.get(id(item), "headlines"))
-        card = _slim_article(item)
-        if dest == "tape" and len(tape) < limit:
-            tape.append(card)
-        elif dest == "headlines" and len(headlines) < limit:
-            headlines.append(card)
-        if len(tape) >= limit and len(headlines) >= limit:
-            break
+        if dest == "tape":
+            tape_rows.append(item)
+        else:
+            head_rows.append(item)
 
-    payload = {"tape": tape, "headlines": headlines, "_v": _DESK_CACHE_V}
-    _MARKET = (now, payload)
+    def _take(rows: list[dict[str, Any]], count: int) -> list[dict[str, Any]]:
+        ranked = sorted(rows, key=lambda item: (0 if item.get("image") else 1, -(item.get("_ts") or 0)))
+        return [_slim_article(item) for item in ranked[:count]]
+
+    tape = _take(tape_rows, limit)
+    headlines = _take(head_rows, limit)
+
+    images: dict[str, str] = {}
+    for raw in [item for _, item in tagged]:
+        image = raw.get("image")
+        key = _norm_title(raw.get("title") or "")
+        if image and key:
+            images.setdefault(key, image)
+    for card in tape + headlines:
+        if card.get("image"):
+            continue
+        key = _norm_title(card.get("title") or "")
+        match = next((images[other] for other in images if key and _near_title(key, other)), None)
+        if match:
+            card["image"] = match
+
+    if enrich:
+        missing = [card for card in headlines + tape if card.get("url") and not card.get("image")]
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            found = list(pool.map(lambda card: (card, _og_image(card.get("url") or "")), missing[:12]))
+        for card, image in found:
+            if image:
+                card["image"] = image
+
+    return {"tape": tape, "headlines": headlines, "_v": _DESK_CACHE_V}
+
+
+def _refresh_desk() -> None:
+    global _MARKET, _DESK_REFRESHING
+    try:
+        _MARKET = (time.time(), _build_desk(DESK_LIMIT, enrich=True))
+    except Exception:
+        pass
+    finally:
+        with _DESK_LOCK:
+            _DESK_REFRESHING = False
+
+
+def warm_desk() -> None:
+    """Kick off a background headline refresh without blocking the caller."""
+    global _DESK_REFRESHING
+    with _DESK_LOCK:
+        if _DESK_REFRESHING:
+            return
+        _DESK_REFRESHING = True
+    threading.Thread(target=_refresh_desk, daemon=True).start()
+
+
+def market_desk(limit: int = 20) -> dict[str, list[dict[str, Any]]]:
+    global _MARKET
+    now = time.time()
+    cached = _MARKET[1] if _MARKET and _MARKET[1].get("_v") == _DESK_CACHE_V else None
+    if cached and now - _MARKET[0] < NEWS_CACHE_TTL:
+        return {
+            "tape": cached["tape"][:limit],
+            "headlines": cached["headlines"][:limit],
+            "results": (cached["tape"] + cached["headlines"])[: limit * 2],
+        }
+    if cached:
+        warm_desk()
+        return {
+            "tape": cached["tape"][:limit],
+            "headlines": cached["headlines"][:limit],
+            "results": (cached["tape"] + cached["headlines"])[: limit * 2],
+        }
+    try:
+        payload = _build_desk(DESK_LIMIT, enrich=False)
+        _MARKET = (time.time(), payload)
+    except Exception:
+        payload = {"tape": [], "headlines": [], "_v": _DESK_CACHE_V}
+    warm_desk()
     return {
-        "tape": tape,
-        "headlines": headlines,
-        "results": tape + headlines,
+        "tape": payload["tape"][:limit],
+        "headlines": payload["headlines"][:limit],
+        "results": (payload["tape"] + payload["headlines"])[: limit * 2],
     }
 
 
 def market_headlines(limit: int = 24) -> list[dict[str, Any]]:
     desk = market_desk(max(12, limit // 2))
     return (desk.get("tape") or []) + (desk.get("headlines") or [])
+
+
+_WATCH_NEWS_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+_WATCH_LOCK = threading.Lock()
+_WATCH_REFRESHING: set[str] = set()
+
+
+def favourite_updates(rows: list[dict[str, str]], limit: int = 16) -> list[dict[str, Any]]:
+    cleaned = [
+        {"ticker": (row.get("ticker") or "").strip().upper(), "name": (row.get("name") or row.get("ticker") or "").strip()}
+        for row in rows
+        if (row.get("ticker") or "").strip()
+    ][:8]
+    if not cleaned:
+        return []
+    key = ",".join(f"{row['ticker']}:{row['name']}" for row in cleaned)
+    now = time.time()
+    cached = _WATCH_NEWS_CACHE.get(key)
+    if cached is None or now - cached[0] >= NEWS_CACHE_TTL:
+        with _WATCH_LOCK:
+            if key not in _WATCH_REFRESHING:
+                _WATCH_REFRESHING.add(key)
+                threading.Thread(
+                    target=_refresh_favourites,
+                    args=(key, cleaned),
+                    daemon=True,
+                ).start()
+    return cached[1][:limit] if cached else []
+
+
+def _refresh_favourites(key: str, cleaned: list[dict[str, str]]) -> None:
+    try:
+        _WATCH_NEWS_CACHE[key] = (time.time(), _collect_favourites(cleaned))
+    except Exception:
+        pass
+    finally:
+        with _WATCH_LOCK:
+            _WATCH_REFRESHING.discard(key)
+
+
+def _collect_favourites(cleaned: list[dict[str, str]]) -> list[dict[str, Any]]:
+    collected: list[dict[str, Any]] = []
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = {
+            pool.submit(_google_news, f"{row['name']} {row['ticker']} stock"): row
+            for row in cleaned
+        }
+        for future in as_completed(futures):
+            row = futures[future]
+            try:
+                articles = future.result()
+            except Exception:
+                articles = []
+            for item in articles[:6]:
+                flags, level = _flags(f"{item.get('title') or ''} {item.get('summary') or ''}")
+                if level == "severe":
+                    severity = "severe"
+                elif level in {"elevated", "watch"}:
+                    severity = "mild"
+                else:
+                    severity = "none"
+                card = _slim_article(item)
+                card.update({
+                    "ticker": row["ticker"],
+                    "name": row["name"],
+                    "severity": severity,
+                    "flags": flags,
+                    "_ts": item.get("_ts") or 0,
+                })
+                collected.append(card)
+
+    rank = {"severe": 0, "mild": 1, "none": 2}
+    collected.sort(key=lambda item: (rank.get(item.get("severity") or "none", 9), -(item.get("_ts") or 0)))
+    return [{field: item[field] for field in item if field != "_ts"} for item in collected]

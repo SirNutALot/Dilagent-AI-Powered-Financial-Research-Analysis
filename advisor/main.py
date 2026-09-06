@@ -9,15 +9,15 @@ from advisor.analyze import analyze
 from advisor.config import APP_NAME, HORIZONS, WEB_DIR
 from advisor.catalog import remember_company
 from advisor.discover import discover, similar_companies, snapshot, sparks
-from advisor.filings import list_filers, mark_uploaded_report
-from advisor.news import market_desk
+from advisor.filings import list_filers, mark_uploaded_report, warm_filers
+from advisor.news import favourite_updates, market_desk, warm_desk
 from advisor.rag import has_filing, save_filing
 from advisor.resolve import resolve_company, search_listed
 
 app = FastAPI(
     title=APP_NAME,
     description="Due-diligence desk: is this company investable?",
-    version="2.2.0",
+    version="2.3.0",
 )
 app.add_middleware(
     CORSMiddleware,
@@ -25,6 +25,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+def prime_desk() -> None:
+    warm_desk()
+    warm_filers()
 
 
 @app.get("/api/health")
@@ -51,6 +57,22 @@ def api_companies(
 @app.get("/api/headlines")
 def api_headlines() -> dict:
     return market_desk(20)
+
+
+@app.get("/api/watch-updates")
+def api_watch_updates(
+    tickers: str = Query(default="", max_length=400),
+    names: str = Query(default="", max_length=800),
+) -> dict:
+    symbols = [part.strip() for part in tickers.split(",") if part.strip()]
+    name_map: dict[str, str] = {}
+    for pair in names.split("|"):
+        if ":" not in pair:
+            continue
+        ticker, name = pair.split(":", 1)
+        name_map[ticker.strip().upper()] = name.strip()
+    rows = [{"ticker": ticker, "name": name_map.get(ticker.upper(), ticker)} for ticker in symbols]
+    return {"results": favourite_updates(rows)}
 
 
 @app.get("/api/listed")
@@ -147,8 +169,8 @@ def index() -> FileResponse:
 
 @app.get("/{name}")
 def static_file(name: str) -> FileResponse:
-    if name in {"styles.css", "app.js", "desk.js"}:
+    if name in {"styles.css", "app.js", "desk.js", "tape.js"}:
         path = WEB_DIR / name
         if path.exists():
-            return FileResponse(path)
+            return FileResponse(path, headers={"Cache-Control": "no-store"})
     raise HTTPException(404, "Not found.")

@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/styles.css" />
+  <link rel="stylesheet" href="/styles.css?v=25" />
 </head>
 <body>
   <header class="top">
@@ -70,7 +70,19 @@
       <p class="search-hint">
         Click the box and scroll — every SEC filer is in the list, plus names you have added.
         <button type="button" class="text-btn" id="toggle-add">Company not listed?</button>
+        <button type="button" class="text-btn" id="toggle-compare">Compare two companies?</button>
       </p>
+      <div id="compare-form" class="add-form" hidden>
+        <p class="add-copy">Compare is optional. Pick a second name, then run diligence. Cancel to research one company only.</p>
+        <div class="field company-field">
+          <label for="compare-company">Compare with</label>
+          <input id="compare-company" type="text" spellcheck="false" placeholder="Second company" />
+          <input type="hidden" id="compare-ticker" />
+          <input type="hidden" id="compare-listed" />
+          <ul id="compare-suggestions" class="suggestions" hidden></ul>
+        </div>
+        <button type="button" class="ghost" id="compare-cancel">Cancel compare</button>
+      </div>
       <form id="add-form" class="add-form" hidden autocomplete="off">
         <p class="add-copy">Add any Yahoo-listed name. Dilagent will use published financials, and a PDF if you have the report.</p>
         <div class="add-grid">
@@ -113,6 +125,7 @@
           <p class="price" id="price"></p>
           <p class="filing-line" id="filing-line"></p>
           <p class="sources" id="sources"></p>
+          <p class="briefing" id="briefing"></p>
         </div>
         <div class="stamp" id="stamp">
           <p class="stamp-kicker">Combined verdict</p>
@@ -121,12 +134,11 @@
           <p class="stamp-stance" id="verdict-stance"></p>
         </div>
       </header>
-
-      <p class="briefing" id="briefing"></p>
       <p class="accuracy-note" id="accuracy-note">
         These results can be wrong. Dilagent is an educational advisor, not a prediction or a recommendation.
         Read the published numbers yourself if you want to check the story.
       </p>
+      <section id="analytics-compare" class="compare-box" hidden></section>
 
       <p class="score-legend">
         These percentages are confidence in each pillar, not a predicted return.
@@ -236,25 +248,37 @@
     </main>
     <section id="view-dashboard" class="app-page" hidden>
       <p class="kicker">Dashboard</p>
-      <h2>Your research</h2>
-      <p class="muted">A compact view of your shortlist, recent Analytics runs, and stored reports. Full analysis stays on Analytics.</p>
+      <h2>Your desk</h2>
+      <p class="muted">Favourites, price moves, and news on names you are tracking. Open Watchlist for quotes and charts. Open Analytics only when you want a full diligence run.</p>
       <div class="dash-grid">
         <article class="app-panel">
-          <p class="kicker">Watchlist</p>
-          <h3>Saved companies</h3>
+          <p class="kicker">Favourites</p>
+          <h3>Favourited companies</h3>
           <div id="dash-favs"></div>
         </article>
+        <article class="app-panel">
+          <p class="kicker">Price alerts</p>
+          <h3>Major moves</h3>
+          <div id="dash-moves"></div>
+        </article>
+      </div>
+      <article class="app-panel">
+        <p class="kicker">Recent updates</p>
+        <h3>News on your favourites</h3>
+        <div id="dash-updates"></div>
+      </article>
+      <div class="dash-grid">
         <article class="app-panel">
           <p class="kicker">Recent Analytics</p>
           <h3>Recently analyzed</h3>
           <div id="dash-recent"></div>
         </article>
+        <article class="app-panel">
+          <p class="kicker">Recent Reports</p>
+          <h3>Latest saved reports</h3>
+          <div id="dash-reports"></div>
+        </article>
       </div>
-      <article class="app-panel">
-        <p class="kicker">Recent Reports</p>
-        <h3>Latest saved reports</h3>
-        <div id="dash-reports"></div>
-      </article>
       <article class="app-panel">
         <p class="kicker">Research changes</p>
         <h3>What moved</h3>
@@ -265,7 +289,7 @@
     <section id="view-watchlist" class="app-page" hidden>
       <p class="kicker">Watchlist</p>
       <h2>Your Watchlist</h2>
-      <p class="muted">Companies you're tracking and comparing.</p>
+      <p class="muted">Quotes, charts, and a two-name technical compare. Click a company to inspect it here. Use Analytics only when you want a full diligence run.</p>
       <form id="watch-search" class="discover-search" autocomplete="off">
         <div class="field company-field">
           <label for="watch-find">Search companies</label>
@@ -273,6 +297,7 @@
           <ul id="watch-suggestions" class="suggestions" hidden></ul>
         </div>
       </form>
+      <div id="watch-inspect" class="inspect-box" hidden></div>
       <div id="watch-compare" class="compare-box" hidden></div>
       <div class="app-toolbar">
         <input id="watch-q" type="search" placeholder="Filter saved names" />
@@ -403,7 +428,7 @@
       </div>
       <details class="filter-box" open>
         <summary>Filters</summary>
-        <p class="filter-lead muted">Screen this result set. Country, exchange, sector, and industry match any selected value. Numerical filters accept a preset or a custom minimum and/or maximum — you do not need both sides.</p>
+        <p class="filter-lead muted">Screen this result set. Country, exchange, sector, and industry are dropdowns and include the full published lists, not just the current page. Selected values are combined with OR. Numerical filters accept a preset or a custom minimum and/or maximum.</p>
         <div class="filter-groups" id="screener-groups"></div>
         <div class="custom-filters">
           <p class="kicker">Additional published field</p>
@@ -562,7 +587,8 @@
       </div>
     </aside>
   </div>
-  <script src="/app.js"></script>
-  <script src="/desk.js"></script>
+  <script src="/tape.js?v=25"></script>
+  <script src="/app.js?v=25"></script>
+  <script src="/desk.js?v=25"></script>
 </body>
 </html>

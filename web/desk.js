@@ -266,6 +266,7 @@
         });
       }
     }
+    if (!events) return;
     events.innerHTML = "";
     if (!log.length) {
       empty(events, "Add a favourite or run Analytics twice on the same name to see score and report changes.");

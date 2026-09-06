@@ -4,7 +4,7 @@ from typing import Any
 
 from advisor.config import HORIZONS, HORIZON_LABELS, llm_available
 from advisor.decision import combine
-from advisor.filings import ensure_annual_report
+from advisor.filings import ensure_annual_report, published_sources
 from advisor.fundamental import analyze_fundamentals
 from advisor.llm import narrate
 from advisor.market import fetch_company
@@ -81,6 +81,9 @@ def analyze(query: str, horizon: int = 90, *, use_llm: bool = True, allow_listed
             "exchange": company.get("exchange") or identity.get("exchange"),
         })
     filing = ensure_annual_report(symbol, company["name"], identity.get("cik"))
+    extra = published_sources(symbol, company.get("website"))
+    seen = {row.get("url") for row in (filing.get("sources") or [])}
+    filing["sources"] = list(filing.get("sources") or []) + [row for row in extra if row.get("url") not in seen]
     rag_notes = analyze_filing(symbol)
     fundamental = analyze_fundamentals(company, rag_notes)
     technical = analyze_technicals(company["history"], horizon)

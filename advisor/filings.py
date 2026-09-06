@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 from typing import Any
 
@@ -124,6 +125,15 @@ def _browse_rows() -> list[dict[str, Any]]:
     if _BROWSE_ROWS is None:
         _BROWSE_ROWS = [_filer_row(row, 10) for row in _sorted_filers()]
     return _BROWSE_ROWS
+
+
+def warm_filers() -> None:
+    def _run() -> None:
+        try:
+            _browse_rows()
+        except Exception:
+            pass
+    threading.Thread(target=_run, daemon=True).start()
 
 
 def list_filers(query: str, limit: int = 40, offset: int = 0) -> dict[str, Any]:
@@ -250,6 +260,24 @@ def _download_reports(cik: str) -> list[dict[str, Any]]:
         return docs
 
 
+def published_sources(ticker: str, website: str | None = None) -> list[dict[str, str]]:
+    sources: list[dict[str, str]] = []
+    seen: set[str] = set()
+
+    def add(label: str, url: str | None) -> None:
+        if not url or url in seen:
+            return
+        seen.add(url)
+        sources.append({"label": label, "url": url})
+
+    add("Company website", website)
+    if ticker:
+        add("Yahoo Finance profile", f"https://finance.yahoo.com/quote/{ticker}")
+        add("Yahoo Finance financials", f"https://finance.yahoo.com/quote/{ticker}/financials")
+        add("TradingView chart", f"https://www.tradingview.com/chart/?symbol={ticker}")
+    return sources
+
+
 def filing_sources(meta: dict[str, Any], cik: str | None) -> list[dict[str, str]]:
     sources: list[dict[str, str]] = []
     seen: set[str] = set()
@@ -309,7 +337,7 @@ def ensure_annual_report(ticker: str, name: str, cik: str | None) -> dict[str, A
             "used": False,
             "source": None,
             "label": "No SEC 10-K/10-Q for this listing. Dilagent used published financials. Upload the company’s report for a deeper read.",
-            "sources": [],
+            "sources": published_sources(ticker),
         }
     try:
         payloads = _download_reports(cik)
@@ -318,12 +346,14 @@ def ensure_annual_report(ticker: str, name: str, cik: str | None) -> dict[str, A
             "used": False,
             "source": None,
             "label": "Could not reach the SEC filing archive. Dilagent used published financials.",
+            "sources": published_sources(ticker),
         }
     if not payloads:
         return {
             "used": False,
             "source": None,
             "label": "No 10-K or 10-Q on file at the SEC.",
+            "sources": published_sources(ticker),
         }
     index_payloads(ticker, payloads)
     annual = next((row for row in payloads if row["kind"] == "annual"), payloads[0])
