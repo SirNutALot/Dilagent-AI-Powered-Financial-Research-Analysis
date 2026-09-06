@@ -65,6 +65,18 @@ SOURCE_FEEDS = (
 )
 
 
+def _pub_ts(value: str | None) -> float:
+    if not value:
+        return 0.0
+    try:
+        return parsedate_to_datetime(value).timestamp()
+    except Exception:
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+        except Exception:
+            return 0.0
+
+
 def _parse_date(value: str | None) -> str | None:
     if not value:
         return None
@@ -195,7 +207,7 @@ def _item_image(item: ElementTree.Element) -> str | None:
     return None
 
 
-def _rss(url: str, source: str) -> list[dict[str, Any]]:
+def _rss(url: str, source: str, max_items: int = 30) -> list[dict[str, Any]]:
     try:
         with httpx.Client(timeout=NEWS_TIMEOUT, headers={"User-Agent": USER_AGENT}, follow_redirects=True) as client:
             response = client.get(url)
@@ -208,21 +220,37 @@ def _rss(url: str, source: str) -> list[dict[str, Any]]:
     except ElementTree.ParseError:
         return []
 
+    def _child(node: ElementTree.Element, *names: str) -> ElementTree.Element | None:
+        wanted = {name.lower() for name in names}
+        for el in node:
+            if el.tag.split("}")[-1].lower() in wanted:
+                return el
+        return None
+
+    def _text(node: ElementTree.Element | None) -> str:
+        if node is None:
+            return ""
+        return (node.text or "").strip()
+
     items: list[dict[str, Any]] = []
-    for item in root.findall(".//item")[:30]:
-        title = (item.findtext("title") or "").strip()
-        link = (item.findtext("link") or "").strip()
-        summary = re.sub("<[^<]+?>", "", item.findtext("description") or "").strip()
-        pub = item.findtext("pubDate")
+    nodes = [el for el in root.iter() if el.tag.split("}")[-1].lower() in {"item", "entry"}]
+    for item in nodes[:max_items]:
+        title = _text(_child(item, "title"))
+        link_el = _child(item, "link")
+        link = (link_el.get("href") if link_el is not None else "") or _text(link_el)
+        summary = re.sub("<[^<]+?>", "", _text(_child(item, "description", "summary", "content")))
+        pub_el = _child(item, "pubDate", "updated", "published", "date")
+        pub = _text(pub_el)
         if not title:
             continue
         items.append({
             "title": title,
-            "url": link,
+            "url": (link or "").strip(),
             "summary": summary[:320],
             "source": source,
             "published": _parse_date(pub),
             "image": _item_image(item),
+            "_ts": _pub_ts(pub),
         })
     return items
 
@@ -412,31 +440,175 @@ def analyze_news(ticker: str, name: str, handle: Any | None = None) -> dict[str,
     return result
 
 
-_MARKET: tuple[float, list[dict[str, Any]]] | None = None
+_DESK_CACHE_V = 5
+_MARKET: tuple[float, dict[str, list[dict[str, Any]]]] | None = None
+
+DESK_FEEDS = (
+    ("Yahoo Finance", "https://finance.yahoo.com/news/rssindex", "tape"),
+    ("MarketWatch", "https://feeds.marketwatch.com/marketwatch/topstories/", "tape"),
+    ("MarketWatch", "https://feeds.marketwatch.com/marketwatch/marketpulse/", "tape"),
+    ("CNBC", "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10000664", "tape"),
+    ("CNBC", "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114", "tape"),
+    ("Reuters Business", "https://feeds.reuters.com/reuters/businessNews", "headlines"),
+    ("Reuters Business", "https://feeds.reuters.com/reuters/USmarketsNews", "tape"),
+    ("Financial Times", "https://www.ft.com/rss/home", "headlines"),
+    ("Financial Times", "https://www.ft.com/markets?format=rss", "tape"),
+    ("Financial Times", "https://www.ft.com/companies?format=rss", "headlines"),
+    ("BBC Business", "https://feeds.bbci.co.uk/news/business/rss.xml", "headlines"),
+    ("CNBC", "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=20910258", "headlines"),
+    ("Google News", "https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=en-US&gl=US&ceid=US:en", "headlines"),
+    ("Google News", "https://news.google.com/rss/search?q=stock+market+OR+nasdaq+OR+earnings+OR+merger&hl=en-US&gl=US&ceid=US:en", "tape"),
+)
+
+_FINANCE_TERMS = (
+    "stock", "stocks", "share", "shares", "nasdaq", "nyse", "dow jones", "s&p",
+    "stock market", "markets", "earnings", "revenue", "profit", "merger", "acquisition",
+    "ipo", "the fed", "fed's", "federal reserve", "inflation", "interest rate", "bond", "bonds",
+    "treasury", "yield", "bank", "banking", "ceo", "cfo", " sec", "regulation",
+    "commodity", "commodities", "oil prices", "crude", "gdp", "economy", "economic",
+    "investor", "dividend", "buyback", "guidance", "forecast", "wall street",
+    "ftse", "nikkei", "hang seng", "ecb", "tariff", "takeover",
+    "antitrust", "lawsuit", "layoff", "unemployment", "jobs report", "cpi",
+    "etf", "futures", "bitcoin", "crypto", "analyst", "upgrade", "downgrade",
+    "quarterly", "outlook", "corporate", "valuation", "hedge fund",
+    "loan", "debt", "equity", "trading", "traders", "rally", "selloff",
+    "sell-off", "index fund", "indexes", "indices", "earnings call",
+    "market cap", "shares outstanding", "going public", "acquire", "m&a",
+    "payrolls", "jobs data", "jobs figures", "s&p 500",
+)
+
+_TAPE_TERMS = (
+    "nasdaq", "nyse", "dow", "s&p", "futures", "yield", "treasury", "oil",
+    "gold", "bitcoin", "crypto", "rally", "selloff", "sell-off", "trading",
+    "traders", "index", "indexes", "etf", "stock", "stocks", "shares",
+    "wall street", "ftse", "nikkei", "commodity", "commodities", "vix",
+    "bond", "bonds",
+)
+
+_HEADLINE_TERMS = (
+    "earnings", "merger", "acquisition", "takeover", "ceo", "cfo", "lawsuit",
+    "regulation", "antitrust", "bank", "banking", "ipo", "guidance", "dividend",
+    "layoff", "inflation", "gdp", "unemployment", "jobs report", "tariff",
+    "deal", "corporate", "company", "profit", "revenue", "sec", "federal reserve",
+    "interest rate", "economy", "economic",
+)
+
+_EXCLUDE_TERMS = (
+    "recipe", "celebrity", "oscars", "box office", "horoscope", "crossword",
+    "football score", "premier league", "nba finals", "netflix show",
+    "vacation", "hostel", "traveler", "traveller", "befriend", "scammer",
+    "labor day sales", "add to your cart", "older people", "peace talks",
+    "peace proposal", "midterm election", "masked protester", "hostels",
+    "budget traveler", "social security", "skip college", "ad blitz",
+    "labor day", "holiday closing", "holiday closings", "my reality",
+    "stores are open", "polymarket", "lebron",
+)
+
+def _norm_title(title: str) -> str:
+    text = (title or "").lower()
+    text = re.sub(r"\s+[-–—|:]\s+[a-z0-9&.' ]{2,40}$", "", text)
+    text = re.sub(r"[^a-z0-9 ]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _desk_dedupe(articles: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    unique: list[dict[str, Any]] = []
+    seen: list[str] = []
+    for item in articles:
+        norm = _norm_title(item.get("title") or "")
+        if len(norm) < 12:
+            continue
+        prefix = " ".join(norm.split()[:8])
+        if any(norm[:48] == other[:48] or prefix == " ".join(other.split()[:8]) or norm.startswith(other[:40]) or other.startswith(norm[:40]) for other in seen):
+            continue
+        seen.append(norm)
+        unique.append(item)
+    return unique
+
+
+def _has_term(blob: str, term: str) -> bool:
+    if " " in term or len(term) >= 8:
+        return term in blob
+    return re.search(rf"\b{re.escape(term)}\b", blob) is not None
+
+
+def _is_finance(item: dict[str, Any]) -> bool:
+    blob = f"{item.get('title') or ''} {item.get('summary') or ''}".lower()
+    if any(_has_term(blob, term) for term in _EXCLUDE_TERMS):
+        return False
+    return any(_has_term(blob, term) for term in _FINANCE_TERMS)
+
+
+def _lane(item: dict[str, Any], source_lane: str) -> str:
+    blob = f"{item.get('title') or ''} {item.get('summary') or ''}".lower()
+    tape = 2 if source_lane == "tape" else 0
+    head = 2 if source_lane == "headlines" else 0
+    tape += sum(1 for term in _TAPE_TERMS if term in blob)
+    head += sum(1 for term in _HEADLINE_TERMS if term in blob)
+    return "tape" if tape >= head else "headlines"
+
+
+def _slim_article(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "title": item.get("title"),
+        "url": item.get("url"),
+        "source": item.get("source"),
+        "published": item.get("published"),
+        "image": item.get("image"),
+    }
+
+
+def market_desk(limit: int = 20) -> dict[str, list[dict[str, Any]]]:
+    global _MARKET
+    now = time.time()
+    if _MARKET and now - _MARKET[0] < NEWS_CACHE_TTL and _MARKET[1].get("_v") == _DESK_CACHE_V:
+        cached = _MARKET[1]
+        return {
+            "tape": cached["tape"][:limit],
+            "headlines": cached["headlines"][:limit],
+            "results": (cached["tape"] + cached["headlines"])[: limit * 2],
+        }
+
+    tagged: list[tuple[str, dict[str, Any]]] = []
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        futures = {
+            pool.submit(_rss, feed, source, 40): lane
+            for source, feed, lane in DESK_FEEDS
+        }
+        for future in as_completed(futures):
+            lane = futures[future]
+            try:
+                for item in future.result():
+                    tagged.append((lane, item))
+            except Exception:
+                continue
+
+    usable = [(lane, item) for lane, item in tagged if _is_finance(item)]
+    usable.sort(key=lambda row: row[1].get("_ts") or 0, reverse=True)
+    chosen = _desk_dedupe([item for _, item in usable])
+    lane_of = {id(item): lane for lane, item in usable}
+
+    tape: list[dict[str, Any]] = []
+    headlines: list[dict[str, Any]] = []
+    for item in chosen:
+        dest = _lane(item, lane_of.get(id(item), "headlines"))
+        card = _slim_article(item)
+        if dest == "tape" and len(tape) < limit:
+            tape.append(card)
+        elif dest == "headlines" and len(headlines) < limit:
+            headlines.append(card)
+        if len(tape) >= limit and len(headlines) >= limit:
+            break
+
+    payload = {"tape": tape, "headlines": headlines, "_v": _DESK_CACHE_V}
+    _MARKET = (now, payload)
+    return {
+        "tape": tape,
+        "headlines": headlines,
+        "results": tape + headlines,
+    }
 
 
 def market_headlines(limit: int = 24) -> list[dict[str, Any]]:
-    global _MARKET
-    now = time.time()
-    if _MARKET and now - _MARKET[0] < NEWS_CACHE_TTL:
-        return _MARKET[1][:limit]
-    articles: list[dict[str, Any]] = []
-    with ThreadPoolExecutor(max_workers=6) as pool:
-        futures = [pool.submit(_rss, feed, source) for source, feed in SOURCE_FEEDS]
-        for future in as_completed(futures):
-            try:
-                articles.extend(future.result())
-            except Exception:
-                continue
-    ranked = sorted(_dedupe(articles), key=lambda row: (0 if row.get("image") else 1, row.get("published") or ""))
-    slim = []
-    for item in ranked[: max(limit, 24)]:
-        slim.append({
-            "title": item.get("title"),
-            "url": item.get("url"),
-            "source": item.get("source"),
-            "published": item.get("published"),
-            "image": item.get("image"),
-        })
-    _MARKET = (now, slim)
-    return slim[:limit]
+    desk = market_desk(max(12, limit // 2))
+    return (desk.get("tape") or []) + (desk.get("headlines") or [])

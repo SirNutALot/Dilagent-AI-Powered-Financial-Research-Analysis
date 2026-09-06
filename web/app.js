@@ -789,8 +789,8 @@ async function loadHeadlines() {
     const response = await fetch("/api/headlines");
     const data = await response.json();
     const rows = data.results || [];
-    const leftRows = rows.slice(0, 6);
-    const rightRows = rows.slice(6, 12);
+    const leftRows = data.tape && data.tape.length ? data.tape : rows.slice(0, Math.ceil(rows.length / 2));
+    const rightRows = data.headlines && data.headlines.length ? data.headlines : rows.slice(Math.ceil(rows.length / 2));
     renderFlash(left, leftRows);
     renderFlash(right, rightRows);
   } catch {
@@ -871,13 +871,14 @@ function rememberRun(data) {
   const watch = exists
     ? (state.watch || []).map((item) => (
       item.ticker === ticker
-        ? { ...item, name: row.name, sector: row.sector, industry: row.industry, exchange: row.exchange }
+        ? { ...item, name: row.name, cik: company.cik || item.cik, sector: row.sector, industry: row.industry, exchange: row.exchange }
         : item
     ))
     : [{
         ticker,
         name: row.name,
         listed: row.listed,
+        cik: company.cik || "",
         sector: row.sector,
         industry: row.industry,
         exchange: row.exchange,

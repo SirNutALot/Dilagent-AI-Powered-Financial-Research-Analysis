@@ -8,9 +8,9 @@ from fastapi.staticfiles import StaticFiles
 from advisor.analyze import analyze
 from advisor.config import APP_NAME, HORIZONS, WEB_DIR
 from advisor.catalog import remember_company
-from advisor.discover import discover, similar_companies, snapshot
+from advisor.discover import discover, similar_companies, snapshot, sparks
 from advisor.filings import list_filers, mark_uploaded_report
-from advisor.news import market_headlines
+from advisor.news import market_desk
 from advisor.rag import has_filing, save_filing
 from advisor.resolve import resolve_company, search_listed
 
@@ -50,7 +50,7 @@ def api_companies(
 
 @app.get("/api/headlines")
 def api_headlines() -> dict:
-    return {"results": market_headlines(28)}
+    return market_desk(20)
 
 
 @app.get("/api/listed")
@@ -69,6 +69,15 @@ def api_profile(q: str = Query(..., max_length=80)) -> dict:
 @app.get("/api/similar")
 def api_similar(q: str = Query(..., max_length=80)) -> dict:
     return similar_companies(q)
+
+
+@app.get("/api/spark")
+def api_spark(
+    tickers: str = Query(default="", max_length=1200),
+    window: str = Query(default="short", max_length=8),
+) -> dict:
+    names = [part.strip() for part in tickers.split(",") if part.strip()]
+    return sparks(names, long=window == "long")
 
 
 @app.get("/api/discover")

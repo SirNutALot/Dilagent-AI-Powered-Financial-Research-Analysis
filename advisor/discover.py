@@ -189,6 +189,7 @@ def snapshot(ticker: str, *, force: bool = False) -> dict[str, Any] | None:
         annual = _num(info.get("earningsGrowth"))
         quarterly = _num(info.get("earningsQuarterlyGrowth"))
         price = _num(info.get("currentPrice")) or _num(info.get("regularMarketPrice"))
+        previous = _num(info.get("previousClose") or info.get("regularMarketPreviousClose"))
         target = _num(info.get("targetMeanPrice"))
         upside = ((target - price) / price) if price and target else None
         high52 = _num(info.get("fiftyTwoWeekHigh"))
@@ -241,6 +242,7 @@ def snapshot(ticker: str, *, force: bool = False) -> dict[str, Any] | None:
             "book_value": _num(info.get("bookValue")),
             "price": price,
             "day_change": _num(info.get("regularMarketChange")),
+            "day_change_pct": ((price - previous) / previous) if price and previous else None,
             "target_mean": target,
             "upside": upside,
             "debt_to_equity": _num(info.get("debtToEquity")),
@@ -313,6 +315,113 @@ def hydrate(tickers: list[str], limit: int = 28) -> list[dict[str, Any]]:
                 pass
     by_ticker = {row["ticker"]: row for row in rows}
     return [by_ticker[symbol] for symbol in ordered if symbol in by_ticker]
+
+
+_SPARK_LONG_VERSION = 1
+
+
+def _period_return(closes: list[float], days: int, *, exact: bool = False) -> float | None:
+    if len(closes) <= days:
+        if exact:
+            return None
+        days = len(closes) - 1
+    if days < 1:
+        return None
+    start = closes[-1 - days]
+    end = closes[-1]
+    if not start:
+        return None
+    return (end - start) / start
+
+
+def _ytd_return(series: Any) -> float | None:
+    if series is None or getattr(series, "empty", True) or len(series) < 2:
+        return None
+    try:
+        end = series.index[-1]
+        clipped = series[series.index.year == end.year]
+        if len(clipped) < 2:
+            return None
+        start = float(clipped.iloc[0])
+        last = float(clipped.iloc[-1])
+        if not start:
+            return None
+        return (last - start) / start
+    except Exception:
+        return None
+
+
+def spark_row(ticker: str, long: bool = False) -> dict[str, Any] | None:
+    symbol = (ticker or "").strip().upper()
+    if not symbol:
+        return None
+    safe = "".join(ch if ch.isalnum() or ch in {"-", "."} else "_" for ch in symbol)
+    path = _PROFILE_DIR / (f"{safe}.spark5.json" if long else f"{safe}.spark.json")
+    if path.exists() and time.time() - path.stat().st_mtime < min(MARKET_CACHE_TTL, 30 * 60):
+        try:
+            cached = json.loads(path.read_text(encoding="utf-8"))
+            if not long or cached.get("_v") == _SPARK_LONG_VERSION:
+                return cached
+        except Exception:
+            pass
+    try:
+        handle = yf.Ticker(symbol)
+        history = handle.history(period="5y" if long else "1mo", auto_adjust=True, timeout=12)
+        if history is None or getattr(history, "empty", True) or "Close" not in history.columns:
+            return None
+        series = history["Close"].dropna()
+        closes = [float(value) for value in series.tolist()]
+        if len(closes) < 2:
+            return None
+        spark = [round(value, 4) for value in closes[-22:]]
+        row: dict[str, Any] = {
+            "ticker": symbol,
+            "closes": spark,
+            "week_return": _period_return(closes, 5, exact=long),
+            "month_return": _period_return(closes, 21, exact=long),
+        }
+        if long:
+            row.update({
+                "_v": _SPARK_LONG_VERSION,
+                "quarter_return": _period_return(closes, 63, exact=True),
+                "half_return": _period_return(closes, 126, exact=True),
+                "ytd_return": _ytd_return(series),
+                "year_return": _period_return(closes, 252, exact=True),
+                "year3_return": _period_return(closes, 756, exact=True),
+                "year5_return": _period_return(closes, 1260, exact=True),
+            })
+        path.write_text(json.dumps(row), encoding="utf-8")
+        return row
+    except Exception:
+        return None
+
+
+def sparks(tickers: list[str], limit: int = 16, long: bool = False) -> dict[str, Any]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    cap = 40 if long else limit
+    for ticker in tickers:
+        symbol = (ticker or "").strip().upper()
+        if not symbol or symbol in seen:
+            continue
+        seen.add(symbol)
+        ordered.append(symbol)
+        if len(ordered) >= cap:
+            break
+    rows: dict[str, Any] = {}
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = {pool.submit(spark_row, symbol, long): symbol for symbol in ordered}
+        try:
+            for future in as_completed(futures, timeout=45 if long else 20):
+                try:
+                    row = future.result()
+                except Exception:
+                    row = None
+                if row:
+                    rows[row["ticker"]] = row
+        except TimeoutError:
+            pass
+    return {"results": rows}
 
 
 def _profile_blob(row: dict[str, Any]) -> str:

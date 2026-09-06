@@ -23,6 +23,7 @@
           ticker: row.ticker,
           name: row.name || row.ticker,
           listed: !!row.listed,
+          cik: row.cik || "",
           sector: row.sector || "",
           industry: row.industry || "",
           exchange: row.exchange || "",
@@ -38,12 +39,37 @@
           at: Date.now(),
         }, ...(state.events || [])].slice(0, 40);
     window.writeDesk({ ...state, watch, events });
+    watchHydrateKey = "";
     paint(currentView());
     if (window.paintResultStar) window.paintResultStar();
   }
 
+  function listingCore(ticker) {
+    return (ticker || "").split(".")[0].toUpperCase();
+  }
+
+  function isSideSecurity(ticker) {
+    return /-(P|PA|PB|PC|PR|WS|WT|W|U|R|UN)(\.|$)/i.test(ticker || "") || /\.PR/i.test(ticker || "");
+  }
+
+  function issuerKey(row) {
+    const cik = String(row.cik || "").replace(/^0+/, "");
+    if (cik) return `cik:${cik}`;
+    return `core:${listingCore(row.ticker)}`;
+  }
+
+  function findIssuerMatch(row, watch) {
+    const key = issuerKey(row);
+    return (watch || []).find((item) => item.ticker !== row.ticker && issuerKey(item) === key) || null;
+  }
+
   function addWatch(row) {
     if (!row || !row.ticker) return;
+    const match = findIssuerMatch(row, desk().watch || []);
+    if (match && (isSideSecurity(row.ticker) || listingCore(row.ticker) === listingCore(match.ticker))) {
+      enrichWatch(match);
+      return;
+    }
     if (!isWatched(row.ticker)) toggleWatch(row);
     enrichWatch(row);
   }
@@ -114,16 +140,37 @@
   }
 
   function starButton(row) {
+    const saved = isWatched(row.ticker);
     const button = document.createElement("button");
     button.type = "button";
-    button.className = `star-btn${isWatched(row.ticker) ? " is-on" : ""}`;
-    button.title = isWatched(row.ticker) ? "Remove from Watchlist" : "Add to Watchlist";
-    button.textContent = isWatched(row.ticker) ? "★" : "☆";
+    button.className = `star-btn${saved ? " is-on" : ""}`;
+    button.title = saved ? "Remove from Watchlist" : "Add to Watchlist";
+    button.setAttribute("aria-label", button.title);
+    button.textContent = saved ? "★" : "☆";
     button.addEventListener("click", (event) => {
       event.stopPropagation();
       toggleWatch(row);
     });
     return button;
+  }
+
+  function moneyShort(value) {
+    if (value == null || Number.isNaN(Number(value))) return "—";
+    return Number(value).toLocaleString(undefined, { maximumFractionDigits: 2 });
+  }
+
+  function sparkSvg(closes) {
+    if (!closes || closes.length < 2) return "—";
+    const min = Math.min(...closes);
+    const max = Math.max(...closes);
+    const span = Math.max(max - min, 1e-9);
+    const points = closes.map((value, index) => {
+      const x = (index / (closes.length - 1)) * 72;
+      const y = 20 - ((value - min) / span) * 18;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    }).join(" ");
+    const up = closes[closes.length - 1] >= closes[0];
+    return `<svg class="spark" viewBox="0 0 72 22" aria-hidden="true"><polyline fill="none" stroke="${up ? "#0d6b4c" : "#b42318"}" stroke-width="1.5" points="${points}" /></svg>`;
   }
 
   function actionButton(label, kind, handler) {
@@ -181,7 +228,7 @@
     const log = desk().events || [];
     favs.innerHTML = "";
     if (!watch.length) {
-      empty(favs, "Nothing saved yet. Star a name on Discover or Watchlist, or run Analytics — analyzed companies are added automatically.");
+      empty(favs, "Nothing saved yet. Star a company or run Analytics. Analyzed companies are added to Watchlist automatically.");
     } else {
       watch.slice(0, 8).forEach((row) => {
         const block = document.createElement("div");
@@ -233,7 +280,83 @@
     }
   }
 
-  function paintWatch() {
+  let watchManaging = false;
+  let watchQuotes = {};
+  let watchSparks = {};
+  let watchHydrateKey = "";
+
+  function groupWatchRows(rows) {
+    const used = new Set();
+    const groups = [];
+    rows.forEach((row) => {
+      if (used.has(row.ticker)) return;
+      const pack = rows.filter((other) => {
+        if (used.has(other.ticker) && other.ticker !== row.ticker) return false;
+        if (other.ticker === row.ticker) return true;
+        const sameCik = row.cik && other.cik && String(row.cik).replace(/^0+/, "") === String(other.cik).replace(/^0+/, "");
+        const sameCore = listingCore(row.ticker) === listingCore(other.ticker) && isSideSecurity(other.ticker);
+        return Boolean(sameCik || sameCore);
+      });
+      pack.forEach((item) => used.add(item.ticker));
+      const primary = pack.find((item) => item.at) || pack.find((item) => !isSideSecurity(item.ticker)) || pack[0];
+      groups.push({
+        ...primary,
+        alternates: pack.filter((item) => item.ticker !== primary.ticker),
+      });
+    });
+    return groups;
+  }
+
+  function mergeQuote(row) {
+    const extra = watchQuotes[row.ticker] || {};
+    return {
+      ...row,
+      cik: row.cik || extra.cik,
+      price: extra.price,
+      day_change_pct: extra.day_change_pct,
+      market_cap: extra.market_cap,
+      revenue_growth: extra.revenue_growth,
+      earnings_growth: extra.earnings_growth,
+      roe: row.roe ?? extra.roe,
+      pe: row.pe ?? extra.pe,
+      sector: row.sector || extra.sector,
+      industry: row.industry || extra.industry,
+      exchange: row.exchange || extra.exchange,
+    };
+  }
+
+  function setWatchManaging(on) {
+    watchManaging = Boolean(on);
+    const bar = $("watch-manage-bar");
+    const toggle = $("watch-manage");
+    if (bar) bar.hidden = !watchManaging;
+    if (toggle) toggle.hidden = watchManaging;
+    document.querySelectorAll("#watch-table .manage-only").forEach((node) => {
+      node.hidden = !watchManaging;
+    });
+    paintWatch(false);
+  }
+
+  async function hydrateWatchMarket(rows) {
+    const tickers = rows.map((row) => row.ticker).filter(Boolean);
+    const key = tickers.join(",");
+    if (!key || key === watchHydrateKey) return;
+    watchHydrateKey = key;
+    try {
+      const [disc, spark] = await Promise.all([
+        fetch(`/api/discover?tickers=${encodeURIComponent(key)}`).then((res) => res.json()),
+        fetch(`/api/spark?tickers=${encodeURIComponent(key)}`).then((res) => res.json()).catch(() => ({ results: {} })),
+      ]);
+      watchQuotes = {};
+      for (const row of disc.results || []) watchQuotes[row.ticker] = row;
+      watchSparks = spark.results || {};
+      paintWatch(false);
+    } catch {
+      watchHydrateKey = "";
+    }
+  }
+
+  function paintWatch(refresh = true) {
     const body = $("watch-body");
     if (!body) return;
     const query = ($("watch-q")?.value || "").trim().toLowerCase();
@@ -242,7 +365,7 @@
     const verdict = $("watch-verdict")?.value || "";
     const change = $("watch-change")?.value || "";
     const sort = $("watch-sort")?.value || "name";
-    let rows = watchedRows();
+    let rows = groupWatchRows(watchedRows().map(mergeQuote));
     fillSelect($("watch-market"), rows.map((row) => row.exchange || row.market), "Market");
     fillSelect($("watch-sector"), rows.map((row) => row.sector), "Sector");
     if ($("watch-verdict")) {
@@ -268,40 +391,70 @@
       if (sort === "at") return (b.at || 0) - (a.at || 0);
       return (a.name || "").localeCompare(b.name || "");
     });
+    document.querySelectorAll("#watch-table .manage-only").forEach((node) => {
+      node.hidden = !watchManaging;
+    });
     body.innerHTML = "";
     if (!rows.length) {
       const tr = document.createElement("tr");
-      tr.innerHTML = `<td colspan="12" class="empty-note">No saved names match. Use the search above to add a company without running Analytics.</td>`;
+      tr.innerHTML = `<td colspan="${watchManaging ? 15 : 14}" class="empty-note">No saved names match. Search above to add a company without running Analytics.</td>`;
       body.appendChild(tr);
+      if (refresh) hydrateWatchMarket(watchedRows());
       return;
     }
     rows.forEach((row) => {
+      const quote = mergeQuote(row);
+      const spark = watchSparks[row.ticker] || {};
       const tr = document.createElement("tr");
-      const check = document.createElement("td");
-      check.innerHTML = `<input type="checkbox" class="watch-check" value="${row.ticker}" />`;
+      if (watchManaging) {
+        const check = document.createElement("td");
+        check.className = "manage-only";
+        check.innerHTML = `<input type="checkbox" class="watch-check" value="${row.ticker}" />`;
+        tr.appendChild(check);
+      }
       const star = document.createElement("td");
       star.appendChild(starButton(row));
       const company = document.createElement("td");
-      company.innerHTML = `<strong>${row.name}</strong>`;
+      const nameBtn = document.createElement("button");
+      nameBtn.type = "button";
+      nameBtn.className = "watch-name";
+      nameBtn.textContent = row.name;
+      nameBtn.addEventListener("click", () => openCompany(row, true));
+      company.appendChild(nameBtn);
+      if (row.alternates && row.alternates.length) {
+        const note = document.createElement("div");
+        note.className = "alt-note";
+        note.textContent = `Also ${row.alternates.map((item) => item.ticker).join(", ")}`;
+        company.appendChild(note);
+      }
       const actions = document.createElement("td");
       const wrap = document.createElement("div");
       wrap.className = "row-actions";
-      wrap.appendChild(actionButton("Open", "ghost", () => openCompany(row, false)));
       wrap.appendChild(actionButton("Run Analytics", "", () => openCompany(row, true)));
       actions.appendChild(wrap);
-      tr.appendChild(check);
+      const day = quote.day_change_pct;
+      const dayClass = day == null ? "chg" : day > 0 ? "chg up" : day < 0 ? "chg down" : "chg";
       tr.appendChild(star);
       tr.appendChild(company);
-      tr.insertAdjacentHTML("beforeend", `<td>${row.ticker}</td><td>${row.exchange || row.market || "—"}</td><td>${row.sector || "—"}</td><td>${row.industry || "—"}</td><td>${scoreText(row.score)}</td>`);
+      tr.insertAdjacentHTML(
+        "beforeend",
+        `<td>${row.ticker}</td><td>${moneyShort(quote.price)}</td><td class="${dayClass}">${pct(day)}</td><td>${cap(quote.market_cap)}</td><td>${pct(quote.revenue_growth)}</td><td>${pct(quote.earnings_growth)}</td><td>${pct(quote.roe)}</td><td>${num(quote.pe)}</td><td>${scoreText(row.score)}</td>`
+      );
       const verdictCell = document.createElement("td");
       verdictCell.innerHTML = row.label
         ? `<span class="pill ${row.investable || tone(row.score)}">${row.label}</span>`
         : `<span class="muted">Not analyzed</span>`;
       tr.appendChild(verdictCell);
-      tr.insertAdjacentHTML("beforeend", `<td class="${changeClass(row)}">${changeText(row)}</td><td>${row.at ? when(row.at) : "—"}</td>`);
+      const trend = document.createElement("td");
+      trend.innerHTML = sparkSvg(spark.closes);
+      if (spark.week_return != null) {
+        trend.insertAdjacentHTML("beforeend", `<div class="alt-note">${pct(spark.week_return)} 1w</div>`);
+      }
+      tr.appendChild(trend);
       tr.appendChild(actions);
       body.appendChild(tr);
     });
+    if (refresh) hydrateWatchMarket(rows);
   }
 
   function selectedReports() {
@@ -331,22 +484,17 @@
     if (body) {
       body.innerHTML = "";
       if (!rows.length) {
-        body.innerHTML = `<tr><td colspan="8" class="empty-note">No reports yet. Run Analytics to generate a historical snapshot.</td></tr>`;
+        body.innerHTML = `<tr><td colspan="7" class="empty-note">No reports yet. Run Analytics to generate a historical snapshot. Watched names do not appear here until they have been analyzed.</td></tr>`;
         return;
       }
       const latest = uniqueCompanies(desk().reports || []).map((row) => `${row.ticker}-${row.at}`);
       rows.forEach((row) => {
         const tr = document.createElement("tr");
+        tr.className = "is-clickable";
         const check = document.createElement("td");
         check.innerHTML = `<input type="checkbox" class="report-check" value="${(desk().reports || []).indexOf(row)}" />`;
         const company = document.createElement("td");
         company.innerHTML = `<strong>${row.name}</strong><div class="muted">${row.ticker}</div>`;
-        const actions = document.createElement("td");
-        const wrap = document.createElement("div");
-        wrap.className = "row-actions";
-        wrap.appendChild(actionButton("Open", "ghost", () => openCompany(row, false)));
-        wrap.appendChild(actionButton("View report", "", () => openCompany(row, true)));
-        actions.appendChild(wrap);
         const status = latest.includes(`${row.ticker}-${row.at}`) ? "Latest stored" : "Earlier run";
         tr.appendChild(check);
         tr.appendChild(company);
@@ -357,7 +505,10 @@
           : "—";
         tr.appendChild(verdictCell);
         tr.insertAdjacentHTML("beforeend", `<td>${row.horizon || "—"}</td><td>${when(row.at)}</td><td class="muted">${status}</td>`);
-        tr.appendChild(actions);
+        tr.addEventListener("click", (event) => {
+          if (event.target.closest("input")) return;
+          openCompany(row, true);
+        });
         body.appendChild(tr);
       });
     }
@@ -436,15 +587,27 @@
     }
 
     box.hidden = false;
-    box.innerHTML = `<p class="kicker">Comparison</p>
-      <h3>Historical reports — not a live Analytics run</h3>
-      <p class="compare-meta">Similar based on the stored snapshot from each run. Open Analytics and run again for a current analysis. Missing fields show as —.</p>
+    box.innerHTML = `<p class="kicker">Report comparison</p>
+      <h3>Historical Analytics results</h3>
+      <p class="compare-meta">This compares stored runs, not the companies on your Watchlist. Click a report row to reopen Analytics. Missing fields show as —.</p>
       <div class="compare-charts">${scoreRows}</div>
       ${spark}
       <div class="table-wrap"><table class="wide data-table">
         <thead><tr><th>Metric</th>${headers.map((item) => `<th>${item}</th>`).join("")}</tr></thead>
         <tbody>${tableRows}</tbody>
       </table></div>`;
+  }
+
+  function metricBars(picked, label, key, format) {
+    const usable = picked.filter((row) => row[key] != null && !Number.isNaN(Number(row[key])));
+    if (!usable.length) return "";
+    const max = Math.max(...usable.map((row) => Math.abs(Number(row[key]))), 1e-9);
+    const bars = picked.map((row) => {
+      const value = row[key];
+      const width = value == null ? 0 : Math.min(100, (Math.abs(Number(value)) / max) * 100);
+      return `<div class="cmp-bar-row"><span>${row.ticker}</span><div class="cmp-track"><i style="width:${width}%"></i></div><span>${format(value)}</span></div>`;
+    }).join("");
+    return `<div class="cmp-metric"><strong>${label}</strong>${bars}</div>`;
   }
 
   function scoreBars(picked) {
@@ -490,6 +653,9 @@
         ...saved,
         ticker,
         name: saved.name || extra.name || ticker,
+        price: extra.price,
+        day_change_pct: extra.day_change_pct,
+        beta: extra.beta,
         market_cap: extra.market_cap,
         revenue_growth: extra.revenue_growth,
         earnings_growth: extra.earnings_growth,
@@ -498,8 +664,10 @@
         pe: saved.pe ?? extra.pe,
         forward_pe: saved.forwardPe ?? extra.forward_pe,
         pb: saved.pb ?? extra.pb,
+        ps: extra.ps,
         ev_ebitda: saved.evEbitda ?? extra.ev_ebitda,
         debt_to_equity: saved.debtToEquity ?? extra.debt_to_equity,
+        current_ratio: saved.currentRatio ?? extra.current_ratio,
         free_cashflow: saved.fcf ?? extra.free_cashflow,
         gross_margin: extra.gross_margin,
         operating_margin: extra.operating_margin,
@@ -515,8 +683,11 @@
       ["News / external", (row) => scoreText(row.newsScore)],
       ["Verdict", (row) => row.label || "Not analyzed"],
       ["Market", (row) => row.exchange || row.market || "—"],
-      ["Sector", (row) => row.sector || "—"],
-      ["Industry", (row) => row.industry || "—"],
+      ["Current price", (row) => moneyShort(row.price)],
+      ["Daily change", (row) => pct(row.day_change_pct)],
+      ["1-week return", (row) => pct((watchSparks[row.ticker] || {}).week_return)],
+      ["1-month return", (row) => pct((watchSparks[row.ticker] || {}).month_return)],
+      ["Beta", (row) => num(row.beta, 2)],
       ["Market cap", (row) => cap(row.market_cap)],
       ["Revenue growth", (row) => pct(row.revenue_growth)],
       ["Earnings growth", (row) => pct(row.earnings_growth)],
@@ -528,16 +699,24 @@
       ["P/E", (row) => num(row.pe)],
       ["Forward P/E", (row) => num(row.forward_pe)],
       ["Price / Book", (row) => num(row.pb, 2)],
+      ["Price / Sales", (row) => num(row.ps, 2)],
       ["EV / EBITDA", (row) => num(row.ev_ebitda)],
       ["Debt / Equity", (row) => num(row.debt_to_equity)],
+      ["Current ratio", (row) => num(row.current_ratio, 2)],
       ["Free cash flow", (row) => cap(row.free_cashflow)],
     ];
     const tableRows = metrics.map(([label, read]) => `<tr><td>${label}</td>${picked.map((row) => `<td>${read(row)}</td>`).join("")}</tr>`).join("");
+    const extraCharts = [
+      metricBars(picked, "Revenue growth", "revenue_growth", pct),
+      metricBars(picked, "Earnings growth", "earnings_growth", pct),
+      metricBars(picked, "ROE", "roe", pct),
+      metricBars(picked, "P/E", "pe", num),
+    ].filter(Boolean).join("");
     box.hidden = false;
     box.innerHTML = `<p class="kicker">Watchlist comparison</p>
-      <h3>Companies you are considering</h3>
-      <p class="compare-meta">This compares the shortlist, not historical reports. Unanalyzed names show — / Not analyzed. Published financials come from Yahoo profile fields Dilagent has fetched.</p>
-      <div class="compare-charts">${scoreBars(picked)}</div>
+      <h3>Companies you are tracking</h3>
+      <p class="compare-meta">This compares the companies on your Watchlist, not historical Analytics reports. Unanalyzed names show — / Not analyzed. Missing published fields show as —.</p>
+      <div class="compare-charts">${scoreBars(picked)}${extraCharts}</div>
       <div class="table-wrap"><table class="wide data-table">
         <thead><tr><th>Metric</th>${headers.map((item) => `<th>${item}</th>`).join("")}</tr></thead>
         <tbody>${tableRows}</tbody>
@@ -581,6 +760,14 @@
     ["price", "Price", "number"],
     ["day_change", "Day change", "number"],
     ["week52_change", "52-week change", "pct"],
+    ["week_return", "1-week return", "pct"],
+    ["month_return", "1-month return", "pct"],
+    ["quarter_return", "3-month return", "pct"],
+    ["half_return", "6-month return", "pct"],
+    ["ytd_return", "YTD return", "pct"],
+    ["year_return", "1-year return", "pct"],
+    ["year3_return", "3-year return", "pct"],
+    ["year5_return", "5-year return", "pct"],
     ["week52_position", "52-week position", "pct"],
     ["week52_high_dist", "Distance from 52-week high", "pct"],
     ["week52_low_dist", "Distance from 52-week low", "pct"],
@@ -711,133 +898,792 @@
     host.appendChild(row);
   }
 
-  function growthPass(value, rule) {
-    if (!rule) return true;
-    if (value == null) return false;
-    if (rule === "pos") return value > 0;
-    if (rule === "neg") return value < 0;
-    return value > Number(rule) / 100;
+  const DILAGENT_VERDICTS = [
+    "Investable",
+    "Investable — wait for a better entry",
+    "Investable — watch headline risk",
+    "Cautiously investable",
+    "Cautiously investable — wait",
+    "Cautious — external risk elevated",
+    "Not investable",
+  ];
+
+  const GROWTH_PRESETS = [
+    ["", "Any"],
+    ["declining", "Declining"],
+    ["flat", "Flat"],
+    ["growing", "Growing"],
+    ["strong", "Strong growth"],
+    ["neg", "Negative"],
+    ["0-5", "0–5%"],
+    ["5-10", "5–10%"],
+    ["10-20", "10–20%"],
+    ["20-30", "20–30%"],
+    ["30-50", "30–50%"],
+    ["50+", "50%+"],
+    ["custom", "Custom"],
+  ];
+
+  const MARGIN_PRESETS = [
+    ["", "Any"],
+    ["neg", "Negative"],
+    ["pos", "Positive"],
+    ["0-5", "0–5%"],
+    ["5-10", "5–10%"],
+    ["10-15", "10–15%"],
+    ["15-20", "15–20%"],
+    ["20-30", "20–30%"],
+    ["30-50", "30–50%"],
+    ["50+", "50%+"],
+    ["custom", "Custom range"],
+  ];
+
+  const ROE_PRESETS = [
+    ["", "Any"],
+    ["neg", "Negative"],
+    ["0-5", "0–5%"],
+    ["5-10", "5–10%"],
+    ["10-15", "10–15%"],
+    ["15-20", "15–20%"],
+    ["20-30", "20–30%"],
+    ["30+", "30%+"],
+    ["custom", "Custom range"],
+  ];
+
+  const MULTIPLE_PRESETS = [
+    ["", "Any"],
+    ["neg", "Negative"],
+    ["na", "Not available"],
+    ["lt10", "< 10"],
+    ["10-15", "10–15"],
+    ["15-20", "15–20"],
+    ["20-30", "20–30"],
+    ["30-50", "30–50"],
+    ["50+", "50+"],
+    ["custom", "Custom range"],
+  ];
+
+  const RETURN_PRESETS = [
+    ["", "Any"],
+    ["large_down", "Large decline"],
+    ["mod_down", "Moderate decline"],
+    ["flat", "Flat"],
+    ["mod_up", "Moderate gain"],
+    ["strong_up", "Strong gain"],
+    ["lt-50", "< -50%"],
+    ["-50--20", "-50% to -20%"],
+    ["-20-0", "-20% to 0%"],
+    ["0-10", "0% to 10%"],
+    ["10-25", "10% to 25%"],
+    ["25-50", "25% to 50%"],
+    ["50+", "50%+"],
+    ["custom", "Custom range"],
+  ];
+
+  const SCORE_PRESETS = [
+    ["", "Any"],
+    ["lt40", "< 40"],
+    ["40-49", "40–49"],
+    ["50-59", "50–59"],
+    ["60-69", "60–69"],
+    ["70-79", "70–79"],
+    ["80-89", "80–89"],
+    ["90+", "90+"],
+    ["custom", "Custom range"],
+  ];
+
+  const SCREENER = [
+    {
+      id: "company",
+      title: "Company",
+      open: true,
+      hint: "Narrow the company universe. Selected values are combined with OR.",
+      controls: [
+        { type: "multi", id: "country", field: "country", label: "Country" },
+        { type: "multi", id: "market", field: "exchange", label: "Exchange / Market" },
+        { type: "multi", id: "sector", field: "sector", label: "Sector" },
+        { type: "multi", id: "industry", field: "industry", label: "Industry" },
+        {
+          type: "num", id: "cap", field: "market_cap", label: "Market capitalization", kind: "cap",
+          minPh: "Min $B", maxPh: "Max $B",
+          presets: [
+            ["", "Any"],
+            ["micro", "Micro cap"],
+            ["small", "Small cap"],
+            ["mid", "Mid cap"],
+            ["large", "Large cap"],
+            ["mega", "Mega cap"],
+            ["gt10b", "> $10B"],
+            ["lt5b", "< $5B"],
+            ["1-10b", "$1B – $10B"],
+            ["custom", "Custom range"],
+          ],
+        },
+      ],
+    },
+    {
+      id: "growth",
+      title: "Growth",
+      controls: [
+        { type: "num", id: "rev", field: "revenue_growth", label: "Revenue growth", kind: "pct", presets: GROWTH_PRESETS, minPh: "Min %", maxPh: "Max %" },
+        { type: "num", id: "earn", field: "earnings_growth", label: "Earnings growth", kind: "pct", presets: GROWTH_PRESETS, minPh: "Min %", maxPh: "Max %" },
+        { type: "num", id: "qearn", field: "earnings_quarterly_growth", label: "Profit growth", kind: "pct", presets: GROWTH_PRESETS, minPh: "Min %", maxPh: "Max %", note: "Published quarterly earnings growth." },
+        {
+          type: "choice", id: "trend", label: "Growth direction",
+          presets: [
+            ["", "Any"],
+            ["declining", "Declining"],
+            ["stable", "Flat"],
+            ["improving", "Growing"],
+            ["strong", "Strong growth"],
+          ],
+        },
+      ],
+    },
+    {
+      id: "profit",
+      title: "Profitability",
+      controls: [
+        { type: "num", id: "roe", field: "roe", label: "ROE", kind: "pct", presets: ROE_PRESETS, minPh: "Min %", maxPh: "Max %" },
+        { type: "num", id: "roa", field: "roa", label: "ROA", kind: "pct", presets: ROE_PRESETS, minPh: "Min %", maxPh: "Max %" },
+        { type: "num", id: "gm", field: "gross_margin", label: "Gross margin", kind: "pct", presets: MARGIN_PRESETS, minPh: "Min %", maxPh: "Max %" },
+        { type: "num", id: "opm", field: "operating_margin", label: "Operating margin", kind: "pct", presets: MARGIN_PRESETS, minPh: "Min %", maxPh: "Max %" },
+        { type: "num", id: "ebitda-m", field: "ebitda_margin", label: "EBITDA margin", kind: "pct", presets: MARGIN_PRESETS, minPh: "Min %", maxPh: "Max %" },
+        { type: "num", id: "npm", field: "profit_margin", label: "Net margin", kind: "pct", presets: MARGIN_PRESETS, minPh: "Min %", maxPh: "Max %" },
+      ],
+    },
+    {
+      id: "value",
+      title: "Valuation",
+      hint: "Negative multiples and missing values are separate from the positive ranges.",
+      controls: [
+        { type: "num", id: "pe", field: "pe", label: "P/E", kind: "multiple", presets: MULTIPLE_PRESETS, minPh: "Min", maxPh: "Max" },
+        { type: "num", id: "fpe", field: "forward_pe", label: "Forward P/E", kind: "multiple", presets: MULTIPLE_PRESETS, minPh: "Min", maxPh: "Max" },
+        { type: "num", id: "pb", field: "pb", label: "Price / Book", kind: "multiple", presets: MULTIPLE_PRESETS, minPh: "Min", maxPh: "Max" },
+        { type: "num", id: "ps", field: "ps", label: "Price / Sales", kind: "multiple", presets: MULTIPLE_PRESETS, minPh: "Min", maxPh: "Max" },
+        { type: "num", id: "ev", field: "ev_ebitda", label: "EV / EBITDA", kind: "multiple", presets: MULTIPLE_PRESETS, minPh: "Min", maxPh: "Max" },
+        { type: "num", id: "evs", field: "ev_revenue", label: "EV / Sales", kind: "multiple", presets: MULTIPLE_PRESETS, minPh: "Min", maxPh: "Max" },
+      ],
+    },
+    {
+      id: "health",
+      title: "Financial Health",
+      controls: [
+        {
+          type: "num", id: "de", field: "debt_to_equity", label: "Debt / Equity", kind: "de",
+          minPh: "Min", maxPh: "Max",
+          presets: [
+            ["", "Any"],
+            ["0", "0"],
+            ["lt0.25", "< 0.25"],
+            ["0.25-0.5", "0.25–0.5"],
+            ["0.5-1", "0.5–1"],
+            ["1-2", "1–2"],
+            ["2-5", "2–5"],
+            ["5+", "5+"],
+            ["custom", "Custom"],
+          ],
+        },
+        {
+          type: "num", id: "cr", field: "current_ratio", label: "Current ratio", kind: "ratio",
+          minPh: "Min", maxPh: "Max",
+          presets: [
+            ["", "Any"],
+            ["lt1", "< 1"],
+            ["1-1.5", "1–1.5"],
+            ["1.5-2", "1.5–2"],
+            ["2-3", "2–3"],
+            ["3+", "3+"],
+            ["custom", "Custom range"],
+          ],
+        },
+        {
+          type: "num", id: "fcf", field: "free_cashflow", label: "Free cash flow", kind: "cash",
+          minPh: "Min $M", maxPh: "Max $M",
+          presets: [
+            ["", "Any"],
+            ["neg", "Negative"],
+            ["pos", "Positive"],
+            ["gt10m", "> $10M"],
+            ["gt100m", "> $100M"],
+            ["gt1b", "> $1B"],
+            ["custom", "Custom"],
+          ],
+        },
+        {
+          type: "num", id: "ocf", field: "operating_cashflow", label: "Operating cash flow", kind: "cash",
+          minPh: "Min $M", maxPh: "Max $M",
+          presets: [
+            ["", "Any"],
+            ["neg", "Negative"],
+            ["pos", "Positive"],
+            ["gt10m", "> $10M"],
+            ["gt100m", "> $100M"],
+            ["gt1b", "> $1B"],
+            ["custom", "Custom"],
+          ],
+        },
+        {
+          type: "num", id: "nd", field: "net_debt", label: "Net debt", kind: "netdebt",
+          minPh: "Min $M", maxPh: "Max $M",
+          presets: [
+            ["", "Any"],
+            ["cash", "Net cash"],
+            ["debt", "Net debt"],
+            ["custom", "Custom range"],
+          ],
+        },
+      ],
+    },
+    {
+      id: "market",
+      title: "Market Performance",
+      hint: "1-day and 1-year use published Yahoo fields. Other windows use daily price history when available.",
+      controls: [
+        { type: "num", id: "day", field: "day_change_pct", label: "1-day return", kind: "ret", presets: RETURN_PRESETS, minPh: "Min %", maxPh: "Max %" },
+        { type: "num", id: "week", field: "week_return", label: "1-week return", kind: "ret", presets: RETURN_PRESETS, minPh: "Min %", maxPh: "Max %" },
+        { type: "num", id: "month", field: "month_return", label: "1-month return", kind: "ret", presets: RETURN_PRESETS, minPh: "Min %", maxPh: "Max %" },
+        { type: "num", id: "quarter", field: "quarter_return", label: "3-month return", kind: "ret", presets: RETURN_PRESETS, minPh: "Min %", maxPh: "Max %" },
+        { type: "num", id: "half", field: "half_return", label: "6-month return", kind: "ret", presets: RETURN_PRESETS, minPh: "Min %", maxPh: "Max %" },
+        { type: "num", id: "ytd", field: "ytd_return", label: "YTD return", kind: "ret", presets: RETURN_PRESETS, minPh: "Min %", maxPh: "Max %" },
+        { type: "num", id: "year", field: "week52_change", label: "1-year return", kind: "ret", presets: RETURN_PRESETS, minPh: "Min %", maxPh: "Max %" },
+        { type: "num", id: "year3", field: "year3_return", label: "3-year return", kind: "ret", presets: RETURN_PRESETS, minPh: "Min %", maxPh: "Max %" },
+        { type: "num", id: "year5", field: "year5_return", label: "5-year return", kind: "ret", presets: RETURN_PRESETS, minPh: "Min %", maxPh: "Max %" },
+      ],
+    },
+    {
+      id: "div",
+      title: "Dividends",
+      controls: [
+        {
+          type: "choice", id: "divpay", label: "Dividend-paying",
+          presets: [
+            ["", "Any"],
+            ["pays", "Pays a dividend"],
+            ["none", "Does not pay a dividend"],
+          ],
+        },
+        {
+          type: "num", id: "div", field: "dividend_yield", label: "Dividend yield", kind: "pct",
+          minPh: "Min %", maxPh: "Max %",
+          presets: [
+            ["", "Any"],
+            ["none", "No dividend"],
+            ["0-2", "0–2%"],
+            ["2-4", "2–4%"],
+            ["4-6", "4–6%"],
+            ["6+", "6%+"],
+            ["custom", "Custom"],
+          ],
+        },
+        {
+          type: "num", id: "payout", field: "payout_ratio", label: "Payout ratio", kind: "pct",
+          minPh: "Min %", maxPh: "Max %",
+          presets: [
+            ["", "Any"],
+            ["lt30", "< 30%"],
+            ["30-50", "30–50%"],
+            ["50-70", "50–70%"],
+            ["70+", "70%+"],
+            ["custom", "Custom"],
+          ],
+        },
+      ],
+    },
+    {
+      id: "dilagent",
+      title: "Dilagent",
+      hint: "Scores and verdicts appear after an Analytics run. These are screening controls, not recommendations.",
+      controls: [
+        { type: "num", id: "dscore", field: "score", label: "Dilagent score", kind: "score", presets: SCORE_PRESETS, minPh: "Min", maxPh: "Max" },
+        { type: "num", id: "dfund", field: "fundScore", label: "Fundamentals score", kind: "score", presets: SCORE_PRESETS, minPh: "Min", maxPh: "Max" },
+        { type: "num", id: "dtech", field: "techScore", label: "Technicals score", kind: "score", presets: SCORE_PRESETS, minPh: "Min", maxPh: "Max" },
+        { type: "num", id: "dnews", field: "newsScore", label: "News / external score", kind: "score", presets: SCORE_PRESETS, minPh: "Min", maxPh: "Max" },
+        { type: "multi", id: "verdict", field: "label", label: "Verdict", static: DILAGENT_VERDICTS },
+        {
+          type: "num", id: "dchg", field: "score_delta", label: "Score change", kind: "delta",
+          minPh: "Min pts", maxPh: "Max pts",
+          presets: [
+            ["", "Any"],
+            ["up", "Improving"],
+            ["flat", "No meaningful change"],
+            ["down", "Declining"],
+            ["custom", "Custom change range"],
+          ],
+        },
+      ],
+    },
+  ];
+
+  function esc(value) {
+    return String(value ?? "").replace(/[&<>"']/g, (ch) => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;",
+    }[ch]));
   }
 
-  function capPass(value, rule) {
-    if (!rule) return true;
-    if (value == null) return false;
-    if (rule === "micro") return value < 3e8;
-    if (rule === "small") return value < 2e9;
-    if (rule === "mid") return value >= 2e9 && value < 1e10;
-    if (rule === "large") return value >= 1e10 && value < 2e11;
-    if (rule === "mega") return value >= 2e11;
+  function optionHtml(pairs) {
+    return pairs.map(([value, label]) => `<option value="${esc(value)}">${esc(label)}</option>`).join("");
+  }
+
+  function buildScreener() {
+    const host = $("screener-groups");
+    if (!host || host.dataset.ready) return;
+    host.innerHTML = SCREENER.map((group) => {
+      const controls = group.controls.map((spec) => {
+        if (spec.type === "multi") {
+          return `<div class="ms" data-ms="${spec.id}" data-field="${spec.field}">
+            <span class="nf-label">${esc(spec.label)}</span>
+            <p class="ms-hint">Match any selected</p>
+            <div class="ms-list" id="ms-${spec.id}"></div>
+          </div>`;
+        }
+        if (spec.type === "choice") {
+          return `<div class="nf" data-nf="${spec.id}" data-kind="choice">
+            <span class="nf-label">${esc(spec.label)}</span>
+            <select class="nf-preset" id="f-${spec.id}">${optionHtml(spec.presets)}</select>
+          </div>`;
+        }
+        return `<div class="nf" data-nf="${spec.id}" data-field="${spec.field}" data-kind="${spec.kind}">
+          <span class="nf-label">${esc(spec.label)}</span>
+          ${spec.note ? `<p class="ms-hint">${esc(spec.note)}</p>` : ""}
+          <select class="nf-preset" id="f-${spec.id}">${optionHtml(spec.presets)}</select>
+          <div class="nf-custom" hidden>
+            <input class="nf-min" type="number" step="any" placeholder="${esc(spec.minPh || "Min")}" />
+            <input class="nf-max" type="number" step="any" placeholder="${esc(spec.maxPh || "Max")}" />
+          </div>
+        </div>`;
+      }).join("");
+      return `<details class="filter-group" data-group="${group.id}"${group.open ? " open" : ""}>
+        <summary>${esc(group.title)}<span class="fg-count"></span></summary>
+        ${group.hint ? `<p class="muted">${esc(group.hint)}</p>` : ""}
+        <div class="filter-grid">${controls}</div>
+      </details>`;
+    }).join("");
+    SCREENER.forEach((group) => {
+      group.controls.forEach((spec) => {
+        if (spec.type === "multi" && spec.static) fillMulti($(`ms-${spec.id}`), spec.static);
+      });
+    });
+    host.dataset.ready = "1";
+  }
+
+  function deRatio(value) {
+    if (value == null || Number.isNaN(Number(value))) return null;
+    const n = Number(value);
+    return n > 10 ? n / 100 : n;
+  }
+
+  function scoreDelta(row) {
+    if (row.score == null || row.prevScore == null) return null;
+    return Number(row.score) - Number(row.prevScore);
+  }
+
+  function paysDividend(row) {
+    return (row.dividend_yield != null && row.dividend_yield > 0) || (row.dividend_rate != null && row.dividend_rate > 0);
+  }
+
+  function rowMetric(row, field) {
+    if (field === "score_delta") return scoreDelta(row);
+    if (field === "debt_to_equity") return deRatio(row.debt_to_equity);
+    if (field === "week52_change") return row.week52_change ?? row.year_return;
+    if (field === "day_change_pct") {
+      if (row.day_change_pct != null) return row.day_change_pct;
+      if (row.price != null && row.day_change != null && row.price !== row.day_change) {
+        const prev = Number(row.price) - Number(row.day_change);
+        if (prev) return Number(row.day_change) / prev;
+      }
+      return null;
+    }
+    return row[field];
+  }
+
+  function customNative(input, kind) {
+    if (!input || input.value === "" || input.value == null) return null;
+    const n = Number(input.value);
+    if (Number.isNaN(n)) return null;
+    if (kind === "pct" || kind === "ret") return n / 100;
+    if (kind === "cap") return n * 1e9;
+    if (kind === "cash" || kind === "netdebt") return n * 1e6;
+    return n;
+  }
+
+  function presetBounds(kind, preset) {
+    const pct = {
+      declining: { max: 0, exMax: true },
+      flat: { min: -0.02, max: 0.02 },
+      growing: { min: 0, exMin: true },
+      strong: { min: 0.2 },
+      neg: { max: 0, exMax: true },
+      pos: { min: 0, exMin: true },
+      none: { none: true },
+      "0-5": { min: 0, max: 0.05 },
+      "5-10": { min: 0.05, max: 0.1 },
+      "10-15": { min: 0.1, max: 0.15 },
+      "15-20": { min: 0.15, max: 0.2 },
+      "10-20": { min: 0.1, max: 0.2 },
+      "20-30": { min: 0.2, max: 0.3 },
+      "30-50": { min: 0.3, max: 0.5 },
+      "0-2": { min: 0, max: 0.02, exMin: true },
+      "2-4": { min: 0.02, max: 0.04 },
+      "4-6": { min: 0.04, max: 0.06 },
+      "6+": { min: 0.06 },
+      "30+": { min: 0.3 },
+      "50+": { min: 0.5 },
+      lt30: { max: 0.3, exMax: true },
+      "30-50": { min: 0.3, max: 0.5 },
+      "50-70": { min: 0.5, max: 0.7 },
+      "70+": { min: 0.7 },
+      large_down: { max: -0.2, exMax: true },
+      mod_down: { min: -0.2, max: 0, exMax: true },
+      mod_up: { min: 0.02, max: 0.2 },
+      strong_up: { min: 0.2 },
+      "lt-50": { max: -0.5, exMax: true },
+      "-50--20": { min: -0.5, max: -0.2 },
+      "-20-0": { min: -0.2, max: 0 },
+      "0-10": { min: 0, max: 0.1 },
+      "10-25": { min: 0.1, max: 0.25 },
+      "25-50": { min: 0.25, max: 0.5 },
+    };
+    if (kind === "pct" || kind === "ret") return pct[preset] || null;
+    if (kind === "multiple") {
+      return {
+        neg: { max: 0, exMax: true },
+        lt10: { min: 0, max: 10, exMax: true },
+        "10-15": { min: 10, max: 15 },
+        "15-20": { min: 15, max: 20 },
+        "20-30": { min: 20, max: 30 },
+        "30-50": { min: 30, max: 50 },
+        "50+": { min: 50 },
+      }[preset] || null;
+    }
+    if (kind === "cap") {
+      return {
+        micro: { min: 0, max: 3e8, exMax: true },
+        small: { min: 3e8, max: 2e9, exMax: true },
+        mid: { min: 2e9, max: 1e10, exMax: true },
+        large: { min: 1e10, max: 2e11, exMax: true },
+        mega: { min: 2e11 },
+        gt10b: { min: 1e10 },
+        lt5b: { max: 5e9, exMax: true },
+        "1-10b": { min: 1e9, max: 1e10 },
+      }[preset] || null;
+    }
+    if (kind === "de") {
+      return {
+        "0": { min: 0, max: 0.01, exMax: true },
+        "lt0.25": { max: 0.25, exMax: true },
+        "0.25-0.5": { min: 0.25, max: 0.5 },
+        "0.5-1": { min: 0.5, max: 1 },
+        "1-2": { min: 1, max: 2 },
+        "2-5": { min: 2, max: 5 },
+        "5+": { min: 5 },
+      }[preset] || null;
+    }
+    if (kind === "ratio") {
+      return {
+        lt1: { max: 1, exMax: true },
+        "1-1.5": { min: 1, max: 1.5 },
+        "1.5-2": { min: 1.5, max: 2 },
+        "2-3": { min: 2, max: 3 },
+        "3+": { min: 3 },
+      }[preset] || null;
+    }
+    if (kind === "cash") {
+      return {
+        neg: { max: 0, exMax: true },
+        pos: { min: 0, exMin: true },
+        gt10m: { min: 1e7 },
+        gt100m: { min: 1e8 },
+        gt1b: { min: 1e9 },
+      }[preset] || null;
+    }
+    if (kind === "netdebt") {
+      return {
+        cash: { max: 0, exMax: true },
+        debt: { min: 0, exMin: true },
+      }[preset] || null;
+    }
+    if (kind === "score") {
+      return {
+        lt40: { max: 40, exMax: true },
+        "40-49": { min: 40, max: 50, exMax: true },
+        "50-59": { min: 50, max: 60, exMax: true },
+        "60-69": { min: 60, max: 70, exMax: true },
+        "70-79": { min: 70, max: 80, exMax: true },
+        "80-89": { min: 80, max: 90, exMax: true },
+        "90+": { min: 90 },
+      }[preset] || null;
+    }
+    if (kind === "delta") {
+      return {
+        up: { min: 0.5 },
+        flat: { min: -0.5, max: 0.5 },
+        down: { max: -0.5, exMax: true },
+      }[preset] || null;
+    }
+    return null;
+  }
+
+  function passBounds(value, bounds, row, kind) {
+    if (!bounds) return true;
+    if (bounds.missing) return value == null || value === "";
+    if (bounds.none) return !paysDividend(row);
+    if (value == null || Number.isNaN(Number(value))) return false;
+    const n = Number(value);
+    if (kind === "multiple" && n < 0 && bounds.max != null && bounds.max > 0 && (bounds.min == null || bounds.min >= 0)) {
+      return false;
+    }
+    if (bounds.min != null && (bounds.exMin ? n <= bounds.min : n < bounds.min)) return false;
+    if (bounds.max != null && (bounds.exMax ? n >= bounds.max : n > bounds.max)) return false;
     return true;
   }
 
-  function ratioPass(value, rule, mode) {
-    if (!rule) return true;
-    if (value == null) return false;
-    if (rule === "pos") return value > 0;
-    if (rule === "neg") return value < 0;
-    const n = Number(rule);
-    if (mode === "pct") return value > n / 100;
-    if (mode === "min") return value >= n;
-    if (mode === "gt") return value > n;
-    return value < n;
+  function selectedMulti(id) {
+    return [...document.querySelectorAll(`#ms-${id} input:checked`)].map((node) => node.value);
+  }
+
+  function nfRoot(id) {
+    return document.querySelector(`[data-nf="${id}"]`);
+  }
+
+  function readBounds(root) {
+    if (!root) return null;
+    const kind = root.dataset.kind;
+    const preset = root.querySelector(".nf-preset")?.value || "";
+    if (!preset) return null;
+    if (preset === "na") return { missing: true };
+    if (preset === "custom") {
+      return {
+        min: customNative(root.querySelector(".nf-min"), kind),
+        max: customNative(root.querySelector(".nf-max"), kind),
+      };
+    }
+    return presetBounds(kind, preset);
+  }
+
+  function syncCustomVisibility() {
+    document.querySelectorAll(".nf").forEach((root) => {
+      const custom = root.querySelector(".nf-custom");
+      if (custom) custom.hidden = root.querySelector(".nf-preset")?.value !== "custom";
+    });
+  }
+
+  function fillMulti(host, values) {
+    if (!host) return;
+    const checked = new Set([...host.querySelectorAll("input:checked")].map((node) => node.value));
+    const unique = [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b));
+    host.innerHTML = unique.length
+      ? unique.map((value) => `<label class="ms-item"><input type="checkbox" value="${esc(value)}"${checked.has(value) ? " checked" : ""} /> ${esc(value)}</label>`).join("")
+      : `<p class="ms-hint" style="padding:8px 10px">No values in this result set.</p>`;
+  }
+
+  function choicePass(id, row) {
+    const preset = $(`f-${id}`)?.value || "";
+    if (!preset) return true;
+    if (id === "trend") {
+      if (preset === "strong") return row.revenue_growth != null && row.revenue_growth >= 0.2;
+      return row.earnings_trend === preset;
+    }
+    if (id === "divpay") {
+      return preset === "pays" ? paysDividend(row) : !paysDividend(row);
+    }
+    return true;
   }
 
   function filterDiscover(rows) {
     return rows.filter((row) => {
-      if ($("f-country")?.value && row.country !== $("f-country").value) return false;
-      if ($("f-region")?.value && row.region !== $("f-region").value) return false;
-      if ($("f-market")?.value && row.exchange !== $("f-market").value) return false;
-      if ($("f-sector")?.value && row.sector !== $("f-sector").value) return false;
-      if ($("f-industry")?.value && row.industry !== $("f-industry").value) return false;
-      if ($("f-type")?.value && row.quote_type !== $("f-type").value) return false;
-      if ($("f-size")?.value && row.company_size !== $("f-size").value) return false;
-      if (!capPass(row.market_cap, $("f-cap")?.value)) return false;
-      if ($("f-price")?.value) {
-        if (row.price == null) return false;
-        const rule = $("f-price").value;
-        if (rule === "200p" && row.price <= 200) return false;
-        if (rule !== "200p" && row.price >= Number(rule)) return false;
+      for (const group of SCREENER) {
+        for (const spec of group.controls) {
+          if (spec.type === "multi") {
+            const picked = selectedMulti(spec.id);
+            if (picked.length && !picked.includes(row[spec.field] || "")) return false;
+          } else if (spec.type === "choice") {
+            if (!choicePass(spec.id, row)) return false;
+          } else {
+            const bounds = readBounds(nfRoot(spec.id));
+            if (bounds && !passBounds(rowMetric(row, spec.field), bounds, row, spec.kind)) return false;
+          }
+        }
       }
-      if ($("f-day")?.value === "pos" && !(row.day_change > 0)) return false;
-      if ($("f-day")?.value === "neg" && !(row.day_change < 0)) return false;
-      if (!growthPass(row.week52_change, $("f-yret")?.value)) return false;
-      if ($("f-52pos")?.value) {
-        if (row.week52_position == null) return false;
-        if ($("f-52pos").value === "high" && row.week52_position < 0.8) return false;
-        if ($("f-52pos").value === "low" && row.week52_position > 0.2) return false;
-        if ($("f-52pos").value === "mid" && (row.week52_position < 0.35 || row.week52_position > 0.65)) return false;
-      }
-      if ($("f-beta")?.value === "1p") {
-        if (!(row.beta > 1)) return false;
-      } else if (!ratioPass(row.beta, $("f-beta")?.value, "lt")) return false;
-      if ($("f-sma50")?.value === "above" && !(row.price_vs_sma50 > 0)) return false;
-      if ($("f-sma50")?.value === "below" && !(row.price_vs_sma50 < 0)) return false;
-      if ($("f-sma200")?.value === "above" && !(row.price_vs_sma200 > 0)) return false;
-      if ($("f-sma200")?.value === "below" && !(row.price_vs_sma200 < 0)) return false;
-      if (!growthPass(row.revenue_growth, $("f-rev")?.value)) return false;
-      if (!growthPass(row.earnings_growth, $("f-earn")?.value)) return false;
-      if (!growthPass(row.earnings_quarterly_growth, $("f-qearn")?.value)) return false;
-      if ($("f-trend")?.value && row.earnings_trend !== $("f-trend").value) return false;
-      if ($("f-esign")?.value === "pos" && !(row.net_income > 0)) return false;
-      if ($("f-esign")?.value === "neg" && !(row.net_income < 0)) return false;
-      if ($("f-eps")?.value === "pos" && !(row.eps > 0)) return false;
-      if ($("f-eps")?.value === "neg" && !(row.eps < 0)) return false;
-      if ($("f-event")?.value === "upcoming" && !row.upcoming_earnings) return false;
-      if ($("f-event")?.value === "recent" && !row.recent_earnings) return false;
-      if (!ratioPass(row.roe, $("f-roe")?.value, "pct")) return false;
-      if (!ratioPass(row.roa, $("f-roa")?.value, "pct")) return false;
-      if (!ratioPass(row.gross_margin, $("f-gm")?.value, "pct")) return false;
-      if (!ratioPass(row.operating_margin, $("f-opm")?.value, "pct")) return false;
-      if (!ratioPass(row.ebitda_margin, $("f-ebitda-m")?.value, "pct")) return false;
-      if (!ratioPass(row.profit_margin, $("f-npm")?.value, "pct")) return false;
-      if (!ratioPass(row.ebitda, $("f-ebitda")?.value, "pos")) return false;
-      if (!ratioPass(row.net_income, $("f-ni")?.value, "pos")) return false;
-      if (!ratioPass(row.pe, $("f-pe")?.value, "lt")) return false;
-      if (!ratioPass(row.forward_pe, $("f-fpe")?.value, "lt")) return false;
-      if (!ratioPass(row.pb, $("f-pb")?.value, "lt")) return false;
-      if (!ratioPass(row.ps, $("f-ps")?.value, "lt")) return false;
-      if (!ratioPass(row.ev_ebitda, $("f-ev")?.value, "lt")) return false;
-      if (!ratioPass(row.ev_revenue, $("f-evs")?.value, "lt")) return false;
-      if (!ratioPass(row.upside, $("f-upside")?.value, "pct")) return false;
-      if (!ratioPass(row.debt_to_equity, $("f-de")?.value, "lt")) return false;
-      if (!ratioPass(row.current_ratio, $("f-cr")?.value, "min")) return false;
-      if (!ratioPass(row.quick_ratio, $("f-qr")?.value, "min")) return false;
-      if (!ratioPass(row.free_cashflow, $("f-fcf")?.value, "pos")) return false;
-      if (!ratioPass(row.operating_cashflow, $("f-ocf")?.value, "pos")) return false;
-      if (!ratioPass(row.fcf_margin, $("f-fcfm")?.value, "pct")) return false;
-      if ($("f-nd")?.value === "cash" && !(row.net_debt < 0)) return false;
-      if ($("f-nd")?.value === "debt" && !(row.net_debt > 0)) return false;
-      if (!ratioPass(row.dividend_yield, $("f-div")?.value, "pct")) return false;
-      if ($("f-payout")?.value && (row.payout_ratio == null || row.payout_ratio >= Number($("f-payout").value) / 100)) return false;
-      if ($("f-ins")?.value && !(row.held_insiders > Number($("f-ins").value) / 100)) return false;
-      if ($("f-inst")?.value && !(row.held_institutions > Number($("f-inst").value) / 100)) return false;
-      if (!ratioPass(row.score, $("f-dscore")?.value, "min")) return false;
-      if (!ratioPass(row.fundScore, $("f-dfund")?.value, "min")) return false;
-      if (!ratioPass(row.techScore, $("f-dtech")?.value, "min")) return false;
-      if (!ratioPass(row.newsScore, $("f-dnews")?.value, "min")) return false;
-      if ($("f-dverdict")?.value && row.label !== $("f-dverdict").value) return false;
-      if ($("f-dchg")?.value === "up" && !(row.score != null && row.prevScore != null && row.score > row.prevScore)) return false;
-      if ($("f-dchg")?.value === "down" && !(row.score != null && row.prevScore != null && row.score < row.prevScore)) return false;
-      if (!customPass(row)) return false;
-      return true;
+      return customPass(row);
     });
   }
 
+  function sortDiscover(rows) {
+    const key = $("discover-sort")?.value || "";
+    const dir = $("discover-dir")?.value || "desc";
+    if (!key) return rows;
+    const sign = dir === "asc" ? 1 : -1;
+    return rows.slice().sort((a, b) => {
+      if (key === "name") return sign * (a.name || "").localeCompare(b.name || "");
+      const av = rowMetric(a, key);
+      const bv = rowMetric(b, key);
+      if (av == null && bv == null) return (a.name || "").localeCompare(b.name || "");
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      if (av === bv) return (a.name || "").localeCompare(b.name || "");
+      return av > bv ? sign : -sign;
+    });
+  }
+
+  function presetLabel(spec, value) {
+    const hit = (spec.presets || []).find((item) => item[0] === value);
+    return hit ? hit[1] : value;
+  }
+
+  function customChip(spec, root) {
+    const min = root.querySelector(".nf-min")?.value;
+    const max = root.querySelector(".nf-max")?.value;
+    const unit = spec.kind === "pct" || spec.kind === "ret" ? "%"
+      : spec.kind === "cap" ? "B"
+      : spec.kind === "cash" || spec.kind === "netdebt" ? "M"
+      : "";
+    if (min && max) return `${spec.label} ${min}–${max}${unit}`;
+    if (min) return `${spec.label} > ${min}${unit}`;
+    if (max) return `${spec.label} < ${max}${unit}`;
+    return `${spec.label} custom`;
+  }
+
+  function activeChips() {
+    const chips = [];
+    for (const group of SCREENER) {
+      for (const spec of group.controls) {
+        if (spec.type === "multi") {
+          selectedMulti(spec.id).forEach((value) => chips.push({ id: spec.id, value, label: value, multi: true }));
+        } else if (spec.type === "choice") {
+          const preset = $(`f-${spec.id}`)?.value || "";
+          if (preset) chips.push({ id: spec.id, label: `${spec.label}: ${presetLabel(spec, preset)}` });
+        } else {
+          const root = nfRoot(spec.id);
+          const preset = root?.querySelector(".nf-preset")?.value || "";
+          if (!preset) continue;
+          chips.push({
+            id: spec.id,
+            label: preset === "custom" ? customChip(spec, root) : `${spec.label}: ${presetLabel(spec, preset)}`,
+          });
+        }
+      }
+    }
+    document.querySelectorAll(".custom-row").forEach((node, index) => {
+      const field = node.querySelector(".cf-field")?.value;
+      const meta = FILTER_FIELDS.find((item) => item[0] === field);
+      if (field) chips.push({ id: `custom-${index}`, label: meta ? meta[1] : field, custom: true, index });
+    });
+    return chips;
+  }
+
+  function renderChips(matchCount) {
+    const host = $("filter-chips");
+    const chips = activeChips();
+    if (host) {
+      host.hidden = !chips.length;
+      host.innerHTML = chips.map((chip) => (
+        `<span class="filter-chip">${esc(chip.label)} <button type="button" data-clear="${esc(chip.id)}"${chip.multi ? ` data-value="${esc(chip.value)}"` : ""}${chip.custom ? ` data-custom="${chip.index}"` : ""} aria-label="Remove">×</button></span>`
+      )).join("") + (chips.length ? `<button type="button" class="ghost" id="clear-filters">Clear all</button>` : "");
+    }
+    const count = $("discover-count");
+    if (count && lastDiscover.length) {
+      count.textContent = `${matchCount} compan${matchCount === 1 ? "y" : "ies"} match`;
+    }
+    document.querySelectorAll(".filter-group").forEach((group) => {
+      const id = group.getAttribute("data-group");
+      const spec = SCREENER.find((item) => item.id === id);
+      const n = spec ? spec.controls.filter((control) => {
+        if (control.type === "multi") return selectedMulti(control.id).length;
+        return !!$(`f-${control.id}`)?.value;
+      }).length : 0;
+      const badge = group.querySelector(".fg-count");
+      if (badge) badge.textContent = n ? ` · ${n}` : "";
+    });
+  }
+
+  function clearControl(id, value) {
+    const multi = document.querySelector(`[data-ms="${id}"]`);
+    if (multi) {
+      multi.querySelectorAll("input").forEach((node) => {
+        if (!value || node.value === value) node.checked = false;
+      });
+      return;
+    }
+    const root = nfRoot(id);
+    if (!root) return;
+    const select = root.querySelector(".nf-preset");
+    if (select) select.value = "";
+    root.querySelectorAll(".nf-min, .nf-max").forEach((node) => { node.value = ""; });
+    const custom = root.querySelector(".nf-custom");
+    if (custom) custom.hidden = true;
+  }
+
+  function clearAllFilters() {
+    SCREENER.forEach((group) => {
+      group.controls.forEach((spec) => clearControl(spec.id));
+    });
+    const extra = $("custom-filter-rows");
+    if (extra) extra.innerHTML = "";
+    document.querySelectorAll("#discover-presets [data-preset]").forEach((btn) => btn.classList.remove("is-active"));
+  }
+
+  function setNf(id, preset, min, max) {
+    const root = nfRoot(id);
+    const select = $(`f-${id}`) || root?.querySelector(".nf-preset");
+    if (select) select.value = preset || "";
+    if (root) {
+      const minEl = root.querySelector(".nf-min");
+      const maxEl = root.querySelector(".nf-max");
+      if (minEl) minEl.value = min ?? "";
+      if (maxEl) maxEl.value = max ?? "";
+    }
+  }
+
   let lastDiscover = [];
+  let discoverSparks = {};
+  let discoverSparkKey = "";
+  let applyingPreset = false;
+
+  function withSpark(row) {
+    const spark = discoverSparks[row.ticker] || {};
+    return {
+      ...row,
+      week_return: spark.week_return ?? row.week_return,
+      month_return: spark.month_return ?? row.month_return,
+      quarter_return: spark.quarter_return ?? row.quarter_return,
+      half_return: spark.half_return ?? row.half_return,
+      ytd_return: spark.ytd_return ?? row.ytd_return,
+      year_return: spark.year_return ?? row.year_return,
+      year3_return: spark.year3_return ?? row.year3_return,
+      year5_return: spark.year5_return ?? row.year5_return,
+    };
+  }
+
+  async function hydrateDiscoverSparks(rows) {
+    const tickers = [...new Set(rows.map((row) => row.ticker).filter(Boolean))].slice(0, 40);
+    const key = tickers.join(",");
+    if (!key || key === discoverSparkKey) return;
+    discoverSparkKey = key;
+    try {
+      const response = await fetch(`/api/spark?tickers=${encodeURIComponent(key)}&window=long`);
+      const data = await response.json();
+      discoverSparks = data.results || {};
+      if (lastDiscover.length) paintDiscoverRows(lastDiscover);
+    } catch {
+      discoverSparkKey = "";
+    }
+  }
 
   function paintDiscoverRows(rows) {
     lastDiscover = rows;
-    const merged = rows.map(mergeResearch);
-    fillSelect($("f-country"), merged.map((row) => row.country), "Any");
-    fillSelect($("f-region"), merged.map((row) => row.region), "Any");
-    fillSelect($("f-market"), merged.map((row) => row.exchange), "Any");
-    fillSelect($("f-sector"), merged.map((row) => row.sector), "Any");
-    fillSelect($("f-industry"), merged.map((row) => row.industry), "Any");
-    fillSelect($("f-type"), merged.map((row) => row.quote_type), "Any");
-    fillSelect($("f-dverdict"), merged.map((row) => row.label), "Any");
-    const filtered = filterDiscover(merged);
-    const count = $("discover-count");
-    if (count) count.textContent = `${filtered.length} compan${filtered.length === 1 ? "y" : "ies"} match your criteria`;
+    const merged = rows.map(mergeResearch).map(withSpark);
+    fillMulti($("ms-country"), merged.map((row) => row.country));
+    fillMulti($("ms-market"), merged.map((row) => row.exchange));
+    fillMulti($("ms-sector"), merged.map((row) => row.sector));
+    fillMulti($("ms-industry"), merged.map((row) => row.industry));
+    syncCustomVisibility();
+    const filtered = sortDiscover(filterDiscover(merged));
+    renderChips(filtered.length);
     const body = $("discover-body");
     if (!body) return;
     body.innerHTML = "";
@@ -886,6 +1732,7 @@
       const response = await fetch(`/api/discover?${params.toString()}`);
       const data = await response.json();
       paintDiscoverRows(data.results || []);
+      hydrateDiscoverSparks(data.results || []);
     } catch {
       if (count) count.textContent = "Could not load published company data.";
     }
@@ -947,44 +1794,64 @@
           : "No published profile for that name.";
       }
       paintDiscoverRows(rows);
+      hydrateDiscoverSparks(rows);
     } catch {
       if (note) note.textContent = "Could not load similar companies.";
     }
   }
 
-  const PRESET_IDS = [
-    "f-rev", "f-earn", "f-qearn", "f-trend", "f-roe", "f-roa", "f-opm", "f-npm",
-    "f-pe", "f-pb", "f-ev", "f-de", "f-dscore", "f-dfund", "f-dchg", "f-cap",
-    "f-fcf", "f-ni", "f-esign",
-  ];
-
   function applyPreset(name) {
-    const set = (id, value) => { if ($(id)) $(id).value = value; };
-    PRESET_IDS.forEach((id) => set(id, ""));
-    if (name === "fundamentals") {
-      set("f-roe", "10"); set("f-opm", "pos"); set("f-de", "100");
-    } else if (name === "growth") {
-      set("f-rev", "10"); set("f-earn", "10");
-    } else if (name === "lowdebt") {
-      set("f-de", "50");
-    } else if (name === "profit") {
-      set("f-npm", "pos"); set("f-roe", "pos"); set("f-ni", "pos");
-    } else if (name === "earnings") {
-      set("f-trend", "improving");
-    } else if (name === "value") {
-      set("f-pe", "25"); set("f-ev", "12");
-    } else if (name === "fcf") {
-      set("f-fcf", "pos");
-    } else if (name === "score") {
-      set("f-dscore", "70");
-    } else if (name === "improving") {
-      set("f-dchg", "up");
-    } else if (name === "similar") {
+    if (name === "similar") {
+      document.querySelectorAll("#discover-presets [data-preset]").forEach((btn) => {
+        btn.classList.toggle("is-active", btn.getAttribute("data-preset") === name);
+      });
       loadSimilar();
       return;
     }
-    if (lastDiscover.length) paintDiscoverRows(lastDiscover);
-    else loadDiscover();
+    applyingPreset = true;
+    try {
+      clearAllFilters();
+      document.querySelectorAll("#discover-presets [data-preset]").forEach((btn) => {
+        btn.classList.toggle("is-active", btn.getAttribute("data-preset") === name);
+      });
+      if (name === "fundamentals") {
+        setNf("roe", "custom", 15, "");
+        setNf("opm", "custom", 10, "");
+        setNf("de", "custom", "", 1);
+      } else if (name === "growth") {
+        setNf("rev", "custom", 10, "");
+        setNf("earn", "custom", 10, "");
+      } else if (name === "lowdebt") {
+        setNf("de", "custom", "", 1);
+      } else if (name === "profit") {
+        setNf("npm", "pos");
+        setNf("roe", "custom", 10, "");
+      } else if (name === "earnings") {
+        setNf("trend", "improving");
+      } else if (name === "value") {
+        setNf("pe", "custom", 10, 30);
+        setNf("ev", "custom", "", 12);
+      } else if (name === "fcf") {
+        setNf("fcf", "pos");
+      } else if (name === "score") {
+        setNf("dscore", "custom", 70, "");
+      } else if (name === "improving") {
+        setNf("dchg", "up");
+      }
+      document.querySelectorAll(".filter-group").forEach((group) => {
+        const id = group.getAttribute("data-group");
+        const spec = SCREENER.find((item) => item.id === id);
+        if (spec && spec.controls.some((control) => {
+          if (control.type === "multi") return selectedMulti(control.id).length;
+          return !!$(`f-${control.id}`)?.value;
+        })) group.open = true;
+      });
+      syncCustomVisibility();
+      if (lastDiscover.length) paintDiscoverRows(lastDiscover);
+      else loadDiscover();
+    } finally {
+      applyingPreset = false;
+    }
   }
 
   function paint(view) {
@@ -1015,6 +1882,7 @@
           ? {
               ...item,
               name: profile.name || item.name,
+              cik: profile.cik || item.cik,
               sector: profile.sector || item.sector,
               industry: profile.industry || item.industry,
               exchange: profile.exchange || item.exchange,
@@ -1061,6 +1929,23 @@
   $("open-method")?.addEventListener("click", () => go("method"));
   $("report-compare")?.addEventListener("click", compareReports);
   $("watch-compare-btn")?.addEventListener("click", compareWatch);
+  $("watch-manage")?.addEventListener("click", () => setWatchManaging(true));
+  $("watch-manage-cancel")?.addEventListener("click", () => {
+    const box = $("watch-compare");
+    if (box) box.hidden = true;
+    setWatchManaging(false);
+  });
+  $("watch-remove-btn")?.addEventListener("click", () => {
+    const tickers = [...document.querySelectorAll(".watch-check:checked")].map((node) => node.value);
+    if (!tickers.length || !window.writeDesk) return;
+    const state = desk();
+    window.writeDesk({
+      ...state,
+      watch: (state.watch || []).filter((item) => !tickers.includes(item.ticker)),
+    });
+    setWatchManaging(false);
+    if (window.paintResultStar) window.paintResultStar();
+  });
 
   $("discover-form")?.addEventListener("submit", (event) => {
     event.preventDefault();
@@ -1071,10 +1956,49 @@
     const button = event.target.closest("[data-preset]");
     if (button) applyPreset(button.getAttribute("data-preset"));
   });
-  document.querySelector(".filter-box")?.addEventListener("change", () => {
+  document.querySelector(".filter-box")?.addEventListener("change", (event) => {
+    if (event.target.classList.contains("nf-preset")) {
+      const root = event.target.closest(".nf");
+      const custom = root?.querySelector(".nf-custom");
+      if (custom) custom.hidden = event.target.value !== "custom";
+    }
+    if (!applyingPreset) {
+      document.querySelectorAll("#discover-presets [data-preset]").forEach((btn) => btn.classList.remove("is-active"));
+    }
+    if (lastDiscover.length) paintDiscoverRows(lastDiscover);
+  });
+  let filterInputTimer = 0;
+  document.querySelector(".filter-box")?.addEventListener("input", (event) => {
+    if (!event.target.classList.contains("nf-min") && !event.target.classList.contains("nf-max")) return;
+    clearTimeout(filterInputTimer);
+    filterInputTimer = setTimeout(() => {
+      if (lastDiscover.length) paintDiscoverRows(lastDiscover);
+    }, 120);
+  });
+  $("discover-sort")?.addEventListener("change", () => {
+    if (lastDiscover.length) paintDiscoverRows(lastDiscover);
+  });
+  $("discover-dir")?.addEventListener("change", () => {
+    if (lastDiscover.length) paintDiscoverRows(lastDiscover);
+  });
+  $("filter-chips")?.addEventListener("click", (event) => {
+    if (event.target.id === "clear-filters") {
+      clearAllFilters();
+      if (lastDiscover.length) paintDiscoverRows(lastDiscover);
+      return;
+    }
+    const button = event.target.closest("[data-clear]");
+    if (!button) return;
+    if (button.hasAttribute("data-custom")) {
+      document.querySelectorAll(".custom-row")[Number(button.getAttribute("data-custom"))]?.remove();
+    } else {
+      clearControl(button.getAttribute("data-clear"), button.getAttribute("data-value"));
+    }
+    document.querySelectorAll("#discover-presets [data-preset]").forEach((btn) => btn.classList.remove("is-active"));
     if (lastDiscover.length) paintDiscoverRows(lastDiscover);
   });
 
   window.Desk = { paint, toggleWatch, isWatched, addWatch };
+  buildScreener();
   paint(currentView());
 })();

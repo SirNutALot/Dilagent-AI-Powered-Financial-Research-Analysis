@@ -265,7 +265,7 @@
     <section id="view-watchlist" class="app-page" hidden>
       <p class="kicker">Watchlist</p>
       <h2>Your Watchlist</h2>
-      <p class="muted">Save companies you're interested in and compare them before deciding which ones to analyze. A company does not need a prior Analytics run. Reports remain the history of completed analyses.</p>
+      <p class="muted">Companies you're tracking and comparing.</p>
       <form id="watch-search" class="discover-search" autocomplete="off">
         <div class="field company-field">
           <label for="watch-find">Search companies</label>
@@ -292,23 +292,31 @@
           <option value="score">Sort: score</option>
           <option value="at">Sort: last analyzed</option>
         </select>
-        <button type="button" class="ghost" id="watch-compare-btn">Compare selected</button>
+        <button type="button" class="ghost" id="watch-manage">Edit Watchlist</button>
+      </div>
+      <div id="watch-manage-bar" class="manage-bar" hidden>
+        <button type="button" id="watch-compare-btn">Compare selected</button>
+        <button type="button" class="ghost" id="watch-remove-btn">Remove selected</button>
+        <button type="button" class="ghost" id="watch-manage-cancel">Cancel</button>
       </div>
       <div class="table-wrap">
         <table class="wide data-table" id="watch-table">
           <thead>
             <tr>
-              <th></th>
+              <th class="manage-only" hidden></th>
               <th></th>
               <th>Company</th>
               <th>Ticker</th>
-              <th>Market</th>
-              <th>Sector</th>
-              <th>Industry</th>
-              <th>Dilagent score</th>
+              <th>Price</th>
+              <th>Daily change</th>
+              <th>Market cap</th>
+              <th>Rev. growth</th>
+              <th>Earn. growth</th>
+              <th>ROE</th>
+              <th>P/E</th>
+              <th>Dilagent</th>
               <th>Verdict</th>
-              <th>Change</th>
-              <th>Last analyzed</th>
+              <th>Trend</th>
               <th></th>
             </tr>
           </thead>
@@ -320,7 +328,7 @@
     <section id="view-reports" class="app-page" hidden>
       <p class="kicker">Reports</p>
       <h2>Research history</h2>
-      <p class="muted">Completed Analytics runs stored in this browser. Compare historical analyses here — Watchlist compares the companies you are considering, whether or not they have been analyzed.</p>
+      <p class="muted">Historical Analytics results only. A company appears here after a completed run — not merely because it is on the Watchlist. Compare stored reports, not the companies you are currently tracking.</p>
       <div class="app-toolbar">
         <div class="field company-field report-search-field">
           <input id="report-q" type="search" placeholder="Search reports" autocomplete="off" />
@@ -332,7 +340,7 @@
           <option value="score">Sort: score</option>
           <option value="name">Sort: company</option>
         </select>
-        <button type="button" class="ghost" id="report-compare">Compare selected</button>
+        <button type="button" class="ghost" id="report-compare">Compare historical reports</button>
       </div>
       <div id="compare-box" class="compare-box" hidden></div>
       <div class="table-wrap">
@@ -346,7 +354,6 @@
               <th>Horizon</th>
               <th>Date</th>
               <th>Status</th>
-              <th></th>
             </tr>
           </thead>
           <tbody id="report-body"></tbody>
@@ -396,224 +403,49 @@
       </div>
       <details class="filter-box" open>
         <summary>Filters</summary>
-        <div class="filter-groups">
-          <details class="filter-group" open>
-            <summary>Company / classification</summary>
-            <div class="filter-grid">
-              <label>Country <select id="f-country"><option value="">Any</option></select></label>
-              <label>Region <select id="f-region"><option value="">Any</option></select></label>
-              <label>Exchange <select id="f-market"><option value="">Any</option></select></label>
-              <label>Sector <select id="f-sector"><option value="">Any</option></select></label>
-              <label>Industry <select id="f-industry"><option value="">Any</option></select></label>
-              <label>Security type <select id="f-type"><option value="">Any</option></select></label>
-              <label>Company size
-                <select id="f-size">
-                  <option value="">Any</option>
-                  <option value="Micro">Micro</option>
-                  <option value="Small">Small</option>
-                  <option value="Mid">Mid</option>
-                  <option value="Large">Large</option>
-                  <option value="Mega">Mega</option>
-                </select>
-              </label>
-              <label>Market cap
-                <select id="f-cap">
-                  <option value="">Any</option>
-                  <option value="micro">Under $300M</option>
-                  <option value="small">Under $2B</option>
-                  <option value="mid">$2B–$10B</option>
-                  <option value="large">$10B–$200B</option>
-                  <option value="mega">Over $200B</option>
-                </select>
-              </label>
-            </div>
-          </details>
-          <details class="filter-group">
-            <summary>Price / market data</summary>
-            <div class="filter-grid">
-              <label>Price
-                <select id="f-price">
-                  <option value="">Any</option>
-                  <option value="10">Under 10</option>
-                  <option value="50">Under 50</option>
-                  <option value="200">Under 200</option>
-                  <option value="200p">Over 200</option>
-                </select>
-              </label>
-              <label>Day change
-                <select id="f-day">
-                  <option value="">Any</option>
-                  <option value="pos">Up</option>
-                  <option value="neg">Down</option>
-                </select>
-              </label>
-              <label>52-week change
-                <select id="f-yret">
-                  <option value="">Any</option>
-                  <option value="pos">Positive</option>
-                  <option value="20">Above 20%</option>
-                  <option value="neg">Negative</option>
-                </select>
-              </label>
-              <label>52-week position
-                <select id="f-52pos">
-                  <option value="">Any</option>
-                  <option value="high">Near 52-week high</option>
-                  <option value="low">Near 52-week low</option>
-                  <option value="mid">Mid-range</option>
-                </select>
-              </label>
-              <label>Beta
-                <select id="f-beta">
-                  <option value="">Any</option>
-                  <option value="1">Under 1</option>
-                  <option value="1.5">Under 1.5</option>
-                  <option value="1p">Above 1</option>
-                </select>
-              </label>
-              <label>Price vs 50-day average
-                <select id="f-sma50">
-                  <option value="">Any</option>
-                  <option value="above">Above</option>
-                  <option value="below">Below</option>
-                </select>
-              </label>
-              <label>Price vs 200-day average
-                <select id="f-sma200">
-                  <option value="">Any</option>
-                  <option value="above">Above</option>
-                  <option value="below">Below</option>
-                </select>
-              </label>
-            </div>
-            <p class="muted">50-day and 200-day averages are Yahoo published fields. RSI, MACD, ATR, and SMA 20 are computed only during an Analytics run and can be compared in Reports.</p>
-          </details>
-          <details class="filter-group">
-            <summary>Growth &amp; earnings</summary>
-            <div class="filter-grid">
-              <label>Revenue growth
-                <select id="f-rev">
-                  <option value="">Any</option>
-                  <option value="pos">Positive</option>
-                  <option value="10">Above 10%</option>
-                  <option value="25">Above 25%</option>
-                  <option value="neg">Declining</option>
-                </select>
-              </label>
-              <label>Earnings growth
-                <select id="f-earn">
-                  <option value="">Any</option>
-                  <option value="pos">Positive</option>
-                  <option value="10">Above 10%</option>
-                  <option value="25">Above 25%</option>
-                  <option value="neg">Declining</option>
-                </select>
-              </label>
-              <label>Quarterly earnings growth
-                <select id="f-qearn">
-                  <option value="">Any</option>
-                  <option value="pos">Positive</option>
-                  <option value="10">Above 10%</option>
-                  <option value="neg">Declining</option>
-                </select>
-              </label>
-              <label>Earnings trend
-                <select id="f-trend">
-                  <option value="">Any</option>
-                  <option value="improving">Improving</option>
-                  <option value="stable">Stable</option>
-                  <option value="declining">Declining</option>
-                </select>
-              </label>
-              <label>Earnings sign
-                <select id="f-esign">
-                  <option value="">Any</option>
-                  <option value="pos">Positive net income</option>
-                  <option value="neg">Negative net income</option>
-                </select>
-              </label>
-              <label>EPS
-                <select id="f-eps">
-                  <option value="">Any</option>
-                  <option value="pos">Positive</option>
-                  <option value="neg">Negative</option>
-                </select>
-              </label>
-              <label>Earnings events
-                <select id="f-event">
-                  <option value="">Any</option>
-                  <option value="upcoming">Upcoming earnings</option>
-                  <option value="recent">Recent earnings</option>
-                </select>
-              </label>
-            </div>
-          </details>
-          <details class="filter-group">
-            <summary>Profitability</summary>
-            <div class="filter-grid">
-              <label>ROE <select id="f-roe"><option value="">Any</option><option value="pos">Positive</option><option value="10">Above 10%</option><option value="20">Above 20%</option></select></label>
-              <label>ROA <select id="f-roa"><option value="">Any</option><option value="pos">Positive</option><option value="5">Above 5%</option></select></label>
-              <label>Gross margin <select id="f-gm"><option value="">Any</option><option value="pos">Positive</option><option value="30">Above 30%</option></select></label>
-              <label>Operating margin <select id="f-opm"><option value="">Any</option><option value="pos">Positive</option><option value="15">Above 15%</option></select></label>
-              <label>EBITDA margin <select id="f-ebitda-m"><option value="">Any</option><option value="pos">Positive</option><option value="15">Above 15%</option></select></label>
-              <label>Net margin <select id="f-npm"><option value="">Any</option><option value="pos">Positive</option></select></label>
-              <label>EBITDA <select id="f-ebitda"><option value="">Any</option><option value="pos">Positive</option></select></label>
-              <label>Net income <select id="f-ni"><option value="">Any</option><option value="pos">Positive</option><option value="neg">Negative</option></select></label>
-            </div>
-          </details>
-          <details class="filter-group">
-            <summary>Valuation</summary>
-            <div class="filter-grid">
-              <label>P/E <select id="f-pe"><option value="">Any</option><option value="15">Under 15</option><option value="25">Under 25</option></select></label>
-              <label>Forward P/E <select id="f-fpe"><option value="">Any</option><option value="15">Under 15</option><option value="25">Under 25</option></select></label>
-              <label>Price / Book <select id="f-pb"><option value="">Any</option><option value="3">Under 3</option></select></label>
-              <label>Price / Sales <select id="f-ps"><option value="">Any</option><option value="3">Under 3</option></select></label>
-              <label>EV / EBITDA <select id="f-ev"><option value="">Any</option><option value="12">Under 12</option></select></label>
-              <label>EV / Sales <select id="f-evs"><option value="">Any</option><option value="3">Under 3</option><option value="8">Under 8</option></select></label>
-              <label>Implied upside <select id="f-upside"><option value="">Any</option><option value="pos">Target above price</option><option value="15">Above 15%</option></select></label>
-            </div>
-          </details>
-          <details class="filter-group">
-            <summary>Balance sheet / cash</summary>
-            <div class="filter-grid">
-              <label>Debt / Equity <select id="f-de"><option value="">Any</option><option value="50">Under 50</option><option value="100">Under 100</option></select></label>
-              <label>Current ratio <select id="f-cr"><option value="">Any</option><option value="1">Above 1</option><option value="1.5">Above 1.5</option></select></label>
-              <label>Quick ratio <select id="f-qr"><option value="">Any</option><option value="1">Above 1</option></select></label>
-              <label>Free cash flow <select id="f-fcf"><option value="">Any</option><option value="pos">Positive</option></select></label>
-              <label>Operating cash flow <select id="f-ocf"><option value="">Any</option><option value="pos">Positive</option></select></label>
-              <label>FCF margin <select id="f-fcfm"><option value="">Any</option><option value="pos">Positive</option><option value="10">Above 10%</option></select></label>
-              <label>Net debt <select id="f-nd"><option value="">Any</option><option value="cash">Net cash</option><option value="debt">Net debt</option></select></label>
-            </div>
-          </details>
-          <details class="filter-group">
-            <summary>Dividends &amp; ownership</summary>
-            <div class="filter-grid">
-              <label>Dividend yield <select id="f-div"><option value="">Any</option><option value="pos">Pays a dividend</option><option value="2">Above 2%</option></select></label>
-              <label>Payout ratio <select id="f-payout"><option value="">Any</option><option value="60">Under 60%</option></select></label>
-              <label>Insider ownership <select id="f-ins"><option value="">Any</option><option value="5">Above 5%</option></select></label>
-              <label>Institutional ownership <select id="f-inst"><option value="">Any</option><option value="50">Above 50%</option></select></label>
-            </div>
-          </details>
-          <details class="filter-group">
-            <summary>Dilagent</summary>
-            <div class="filter-grid">
-              <label>Dilagent score <select id="f-dscore"><option value="">Any</option><option value="70">70%+</option><option value="45">45%+</option></select></label>
-              <label>Fundamentals <select id="f-dfund"><option value="">Any</option><option value="70">70%+</option></select></label>
-              <label>Technicals <select id="f-dtech"><option value="">Any</option><option value="70">70%+</option></select></label>
-              <label>News / external <select id="f-dnews"><option value="">Any</option><option value="70">70%+</option></select></label>
-              <label>Verdict <select id="f-dverdict"><option value="">Any</option></select></label>
-              <label>Score change <select id="f-dchg"><option value="">Any</option><option value="up">Improving</option><option value="down">Declining</option></select></label>
-            </div>
-          </details>
-        </div>
+        <p class="filter-lead muted">Screen this result set. Country, exchange, sector, and industry match any selected value. Numerical filters accept a preset or a custom minimum and/or maximum — you do not need both sides.</p>
+        <div class="filter-groups" id="screener-groups"></div>
         <div class="custom-filters">
-          <p class="kicker">Custom filter</p>
-          <p class="muted">Add a condition on any published field Dilagent actually stores. Rows without a required numeric field are excluded unless you choose “is not available”.</p>
+          <p class="kicker">Additional published field</p>
+          <p class="muted">Optional extra condition on a field Dilagent actually stores. Rows without a required numeric field are excluded unless you choose “is not available”.</p>
           <div id="custom-filter-rows"></div>
           <button type="button" class="ghost" id="add-filter">Add filter</button>
         </div>
       </details>
-      <p class="result-count" id="discover-count">Search or apply a preset to see published matches.</p>
+      <div class="discover-results-bar">
+        <div class="discover-results-meta">
+          <p class="result-count" id="discover-count">Search or apply a preset to see published matches.</p>
+          <div class="filter-chips" id="filter-chips" hidden></div>
+        </div>
+        <div class="discover-sort">
+          <label>Sort by
+            <select id="discover-sort">
+              <option value="">Relevance</option>
+              <option value="score">Dilagent score</option>
+              <option value="market_cap">Market cap</option>
+              <option value="revenue_growth">Revenue growth</option>
+              <option value="earnings_growth">Earnings growth</option>
+              <option value="roe">ROE</option>
+              <option value="pe">P/E</option>
+              <option value="day_change_pct">1-day return</option>
+              <option value="week_return">1-week return</option>
+              <option value="month_return">1-month return</option>
+              <option value="week52_change">1-year return</option>
+              <option value="dividend_yield">Dividend yield</option>
+              <option value="debt_to_equity">Debt / Equity</option>
+              <option value="free_cashflow">Free cash flow</option>
+              <option value="price">Price</option>
+              <option value="name">Company name</option>
+            </select>
+          </label>
+          <label>Order
+            <select id="discover-dir">
+              <option value="desc">High to low</option>
+              <option value="asc">Low to high</option>
+            </select>
+          </label>
+        </div>
+      </div>
       <div class="table-wrap">
         <table class="wide data-table" id="discover-table">
           <thead>
